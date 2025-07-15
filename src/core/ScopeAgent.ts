@@ -25,7 +25,8 @@ import {
     UserPreferences,
     ProblemType,
     FallbackStrategy,
-    ExecutionError
+    ExecutionError,
+    EvidenceData
 } from '../types/AgentTypes';
 import { AnalysisTool, ToolInput, ToolOutput } from '../framework/types/FrameworkTypes';
 
@@ -107,11 +108,17 @@ export class ScopeOptimizationAgent implements AgentCore {
         try {
             this.logger.info(`🧠 Agent thinking about: "${input}"`);
             
+            // 阶段1新增：先收集运行证据
+            const evidenceData = await this.collectEvidence(context);
+            
+            // 将证据融入上下文，增强意图分析
+            const enhancedContext = this.enhanceContextWithEvidence(context, evidenceData);
+            
             // 使用语言模型进行智能意图分析
-            const intentAnalysis = await this.languageModel.analyzeIntent(input, context);
+            const intentAnalysis = await this.languageModel.analyzeIntent(input, enhancedContext);
             
             // 评估复杂度
-            const complexity = this.languageModel.assessComplexity(input, context);
+            const complexity = this.languageModel.assessComplexity(input, enhancedContext);
             
             // 确定所需工具
             const availableTools = Array.from(this.tools.keys());
@@ -122,21 +129,22 @@ export class ScopeOptimizationAgent implements AgentCore {
             );
             
             // 进行风险评估
-            const riskAssessment = this.assessRisks(input, context, intentAnalysis.problemType);
+            const riskAssessment = this.assessRisks(input, enhancedContext, intentAnalysis.problemType);
             
             // 分析上下文因素
-            const contextualFactors = this.analyzeContextualFactors(input, context);
+            const contextualFactors = this.analyzeContextualFactors(input, enhancedContext);
 
             const thought: AgentThought = {
                 id: `thought_${uuidv4()}`,
                 intent: intentAnalysis.intent,
-                reasoning: this.enhanceReasoningWithContext(intentAnalysis.reasoning, context),
+                reasoning: this.enhanceReasoningWithContext(intentAnalysis.reasoning, enhancedContext),
                 confidence: this.adjustConfidenceBasedOnExperience(intentAnalysis.confidence),
                 problemType: intentAnalysis.problemType,
                 requiredTools: requiredTools,
                 expectedComplexity: complexity,
                 riskAssessment: riskAssessment,
                 contextualFactors: contextualFactors,
+                evidenceData: evidenceData,  // 阶段1新增：添加证据数据
                 timestamp: new Date()
             };
 
@@ -718,6 +726,11 @@ export class ScopeOptimizationAgent implements AgentCore {
                 confidenceImpact: -0.1
             },
             contextualFactors: ['使用备用分析模式'],
+            evidenceData: {  // 阶段1新增：备用模式下的空证据数据
+                hasData: false,
+                collectionTime: 0,
+                availableFiles: []
+            },
             timestamp: new Date()
         };
     }
@@ -1325,4 +1338,158 @@ export class ScopeOptimizationAgent implements AgentCore {
     private generateMitigationStrategies(riskFactors: string[]): string[] {
         return riskFactors.map(factor => `缓解${factor}的策略`);
     }
+
+    /**
+     * 收集运行证据 - 阶段1新增
+     * 在思考前先读取关键运行结果文件
+     */
+    private async collectEvidence(context: AgentContext): Promise<EvidenceData> {
+        const startTime = Date.now();
+        const availableFiles: string[] = [];
+        let runtimeStats: any = null;
+        let errorLogs: any = null;
+        let vertexInfo: any = null;
+        
+        try {
+            this.logger.info('🔍 开始收集运行证据...');
+            
+            // 尝试读取运行时统计数据
+            if (this.tools.has('extractRuntime2')) {
+                try {
+                    const runtimeTool = this.tools.get('extractRuntime2')!;
+                    const runtimeResult = await runtimeTool.execute({
+                        filePath: context.workspaceState.currentJobFolder || '',
+                        fileType: 'RUNTIME_STATS',
+                        analysisGoal: 'runtime_analysis'
+                    });
+                    
+                    if (runtimeResult.success && runtimeResult.data) {
+                        runtimeStats = runtimeResult.data;
+                        availableFiles.push('__ScopeRuntimeStatistics__.xml');
+                        this.logger.info('✅ 成功收集运行时统计数据');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取运行时统计失败: ${error}`);
+                }
+            }
+            
+            // 尝试读取错误日志
+            if (this.tools.has('errorLogReader')) {
+                try {
+                    const errorTool = this.tools.get('errorLogReader')!;
+                    const errorResult = await errorTool.execute({
+                        filePath: context.workspaceState.currentJobFolder || '',
+                        fileType: 'ERROR_INFO',
+                        analysisGoal: 'error_analysis'
+                    });
+                    
+                    if (errorResult.success && errorResult.data) {
+                        errorLogs = errorResult.data;
+                        availableFiles.push('Error');
+                        this.logger.info('✅ 成功收集错误日志');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取错误日志失败: ${error}`);
+                }
+            }
+            
+            // 尝试读取顶点信息
+            if (this.tools.has('extractVertex')) {
+                try {
+                    const vertexTool = this.tools.get('extractVertex')!;
+                    const vertexResult = await vertexTool.execute({
+                        filePath: context.workspaceState.currentJobFolder || '',
+                        fileType: 'VERTEX_DEFINITION',
+                        analysisGoal: 'vertex_analysis'
+                    });
+                    
+                    if (vertexResult.success && vertexResult.data) {
+                        vertexInfo = vertexResult.data;
+                        availableFiles.push('ScopeVertexDef.xml');
+                        this.logger.info('✅ 成功收集顶点信息');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取顶点信息失败: ${error}`);
+                }
+            }
+            
+            const collectionTime = Date.now() - startTime;
+            const hasData = availableFiles.length > 0;
+            
+            this.logger.info(`🔍 证据收集完成，耗时${collectionTime}ms，收集到${availableFiles.length}个文件`);
+            
+            return {
+                runtimeStats,
+                errorLogs,
+                vertexInfo,
+                hasData,
+                collectionTime,
+                availableFiles
+            };
+            
+        } catch (error) {
+            this.logger.error(`证据收集失败: ${error}`);
+                         return {
+                 hasData: false,
+                 collectionTime: Date.now() - startTime,
+                 availableFiles: []
+             };
+         }
+     }
+
+     /**
+      * 用证据数据增强上下文 - 阶段1新增
+      */
+     private enhanceContextWithEvidence(context: AgentContext, evidenceData: EvidenceData): AgentContext {
+         const enhancedContext = { ...context };
+         
+         // 如果有证据数据，将其添加到对话历史中供LLM参考
+         if (evidenceData.hasData) {
+             const evidenceSummary = this.generateEvidenceSummary(evidenceData);
+             
+             // 添加证据摘要到对话历史
+             enhancedContext.conversationHistory = [
+                 ...context.conversationHistory,
+                 {
+                     role: 'system',
+                     content: `运行证据摘要: ${evidenceSummary}`,
+                     timestamp: new Date()
+                 }
+             ];
+             
+             // 更新工作空间状态
+             enhancedContext.workspaceState = {
+                 ...context.workspaceState,
+                 scopeFilesAvailable: evidenceData.availableFiles.length > 0
+             };
+         }
+         
+         return enhancedContext;
+     }
+
+     /**
+      * 生成证据摘要 - 阶段1新增
+      */
+     private generateEvidenceSummary(evidenceData: EvidenceData): string {
+         const summaryParts: string[] = [];
+         
+         if (evidenceData.runtimeStats) {
+             summaryParts.push(`运行时统计: 发现${evidenceData.runtimeStats.vertexCount || 0}个顶点`);
+             if (evidenceData.runtimeStats.timeStats) {
+                 summaryParts.push(`总执行时间: ${evidenceData.runtimeStats.timeStats.executeElapsedTime || 0}ms`);
+             }
+         }
+         
+         if (evidenceData.errorLogs) {
+             summaryParts.push(`错误日志: ${evidenceData.errorLogs.hasErrors ? '发现错误' : '无错误'}`);
+         }
+         
+         if (evidenceData.vertexInfo) {
+             summaryParts.push(`顶点信息: 包含${evidenceData.vertexInfo.vertexCount || 0}个计算节点`);
+         }
+         
+         summaryParts.push(`收集到${evidenceData.availableFiles.length}个分析文件`);
+         
+         return summaryParts.join('; ');
+     }
 }

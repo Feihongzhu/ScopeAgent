@@ -81,7 +81,18 @@ export interface AgentThought {
     expectedComplexity: ComplexityLevel;
     riskAssessment: RiskAssessment;   // 风险评估
     contextualFactors: string[];      // 上下文因素
+    evidenceData?: EvidenceData;      // 运行证据数据 (阶段1新增)
     timestamp: Date;
+}
+
+// 运行证据数据结构
+export interface EvidenceData {
+    runtimeStats?: any;               // 运行时统计数据
+    errorLogs?: any;                  // 错误日志
+    vertexInfo?: any;                 // 顶点信息
+    hasData: boolean;                 // 是否成功收集到数据
+    collectionTime: number;           // 收集耗时(毫秒)
+    availableFiles: string[];         // 可用的分析文件
 }
 
 export interface AgentPlan {
