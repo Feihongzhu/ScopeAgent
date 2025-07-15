@@ -1,39 +1,169 @@
 import * as vscode from 'vscode';
-import * as fs from 'fs';
-import * as path from 'path';
-import { parseAndAnalyzeScopeRuntime } from './functions/extractRuntime';
-import { analyzeScopeRuntimeStatistics, formatStatisticsReport, AnalyzeVertexStates } from './functions/extractRuntime2';
-import { parseAndAnalyzeScopeVertices } from './functions/extractOperator';
+import * as os from 'os';
 import { Logger } from './functions/logger';
-import { ConversationManager } from './customAgent';
-import * as os from 'os'; 
+import { ScopeOptimizationAgent } from './core/ScopeAgent';
+import { ToolRegistry } from './tools/AgentTools';
+import { AgentDemo } from './demo/AgentDemo';
+import {
+    AgentContext,
+    ConversationMessage,
+    WorkspaceState,
+    UserPreferences
+} from './types/AgentTypes';
 
-//  username :
+// 全局变量
 const username = os.userInfo().username;
 const tempPath = `C:\\Users\\${username}\\AppData\\Local\\Temp\\DataLakeTemp`;
-const criticalFiles = ['scope.script', '__ScopeCodeGen__.dll.cs', '__ScopeRuntimeStatistics__.xml', 'ScopeVertexDef.xml']; 
 
+/**
+ * SCOPE AI Agent扩展激活函数
+ */
 export function activate(context: vscode.ExtensionContext) {
-	const logger = new Logger("Scope Opt Agent");
-    logger.info("Your Extension activated");
-	// Create a single conversation manager
-	const conversationManager = new ConversationManager(logger);
+    const logger = new Logger("SCOPE AI Agent");
+    logger.info("🚀 SCOPE AI Agent Extension activated");
 
-	let keyAnalysis: AnalyzeVertexStates = {} as AnalyzeVertexStates;
+    // 初始化核心组件
+    const scopeAgent = new ScopeOptimizationAgent(logger);
+    const toolRegistry = new ToolRegistry(logger);
+    const agentDemo = new AgentDemo();
 
-    // Get the list of Cosmos job folders
+    // 注册工具到Agent
+    toolRegistry.getAllTools().forEach(tool => {
+        scopeAgent.registerTool(tool);
+    });
+
+    // 对话历史管理
+    const conversationHistory: ConversationMessage[] = [];
+
+    /**
+     * 创建Agent上下文
+     */
+    function createAgentContext(userInput: string): AgentContext {
+        const workspaceState: WorkspaceState = {
+            activeFiles: vscode.workspace.textDocuments.map(doc => doc.fileName),
+            recentAnalyses: [],
+            lastOptimization: undefined,
+            currentJobFolder: undefined,
+            scopeFilesAvailable: checkScopeFilesAvailable()
+        };
+
+        const userPreferences: UserPreferences = {
+            optimizationLevel: 'moderate',
+            autoApplyFixes: false,
+            preferredAnalysisDepth: 'detailed',
+            language: 'zh',
+            reportFormat: 'markdown'
+        };
+
+        return {
+            userId: 'vscode-user',
+            sessionId: `session_${Date.now()}`,
+            conversationHistory: [...conversationHistory],
+            workspaceState,
+            userPreferences,
+            currentTask: userInput,
+            timestamp: new Date(),
+            availableTools: toolRegistry.getAllTools().map(tool => tool.name),
+            memorySnapshot: {}
+        };
+    }
+
+    /**
+     * 检查SCOPE文件是否可用
+     */
+    function checkScopeFilesAvailable(): boolean {
+        try {
+            const fs = require('fs');
+            if (!fs.existsSync(tempPath)) return false;
+            
+            const items = fs.readdirSync(tempPath, { withFileTypes: true });
+            return items.some((item: any) => 
+                item.isDirectory() && item.name.toLowerCase().includes('cosmos')
+            );
+        } catch (error) {
+            logger.warn(`Failed to check SCOPE files: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * 添加对话消息到历史
+     */
+    function addToConversationHistory(role: 'user' | 'agent', content: string, metadata?: any) {
+        const message: ConversationMessage = {
+            role,
+            content,
+            timestamp: new Date(),
+            metadata
+        };
+        
+        conversationHistory.push(message);
+        
+        // 保持历史记录在合理范围内
+        if (conversationHistory.length > 20) {
+            conversationHistory.splice(0, conversationHistory.length - 20);
+        }
+    }
+
+    /**
+     * 检查语言模型可用性
+     */
+    async function checkLanguageModelAvailability(): Promise<boolean> {
+        try {
+            const availableModels = await vscode.lm.selectChatModels();
+            logger.info(`Available language models: ${availableModels.length}`);
+            
+            if (availableModels.length === 0) {
+                logger.warn("No language models available");
+                return false;
+            }
+            
+            availableModels.forEach((model, index) => {
+                logger.info(`Model ${index}: ${model.id}, family: ${model.family}`);
+            });
+            
+            return true;
+        } catch (error) {
+            logger.error(`Error checking available models: ${error}`);
+            return false;
+        }
+    }
+
+    /**
+     * 显示语言模型不可用错误
+     */
+    function showLanguageModelError(response: vscode.ChatResponseStream) {
+        response.markdown("❌ **语言模型不可用**\n\n" +
+            "此扩展需要GitHub Copilot或VS Code语言模型API访问权限。\n\n" +
+            "**请检查：**\n" +
+            "1. GitHub Copilot扩展已安装并登录\n" +
+            "2. 您有活跃的GitHub Copilot订阅\n" +
+            "3. VS Code语言模型API已启用\n\n" +
+            "**解决方法：**\n" +
+            "- 从VS Code市场安装GitHub Copilot扩展\n" +
+            "- 使用有Copilot访问权限的GitHub账号登录\n" +
+            "- 如需要，重启VS Code");
+    }
+
+    /**
+     * 获取可用的Cosmos Job文件夹
+     */
     async function getCosmosJobFolders(): Promise<string[]> {
         try {
+            const fs = require('fs');
+            if (!fs.existsSync(tempPath)) return [];
+            
             const items = (await fs.promises.readdir(tempPath, { withFileTypes: true }))
-                .filter(dirent => dirent.isDirectory())
-                .map(dirent => dirent.name);
-            return items.filter(item => {
-                const fullPath = path.join(tempPath, item);
+                .filter((dirent: any) => dirent.isDirectory())
+                .map((dirent: any) => dirent.name);
+            
+            return items.filter((item: string) => {
+                const fullPath = require('path').join(tempPath, item);
                 return item.toLowerCase().includes('cosmos') && fs.statSync(fullPath).isDirectory();
-            }).sort((a, b) => {
-                // Sort by folder creation time, latest one in front
-                const statA = fs.statSync(path.join(tempPath, a));
-                const statB = fs.statSync(path.join(tempPath, b));
+            }).sort((a: string, b: string) => {
+                // 按文件夹创建时间排序，最新的在前
+                const statA = fs.statSync(require('path').join(tempPath, a));
+                const statB = fs.statSync(require('path').join(tempPath, b));
                 return statB.birthtimeMs - statA.birthtimeMs;
             });
         } catch (error) {
@@ -42,80 +172,40 @@ export function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    // Read the specified file content in the job folder
-    async function readJobFiles(jobFolder: string): Promise<Map<string, string>> {
-        const fileContents = new Map<string, string>();
-        const jobPath = path.join(tempPath, jobFolder);
-
-        try {
-            const allFiles = await fs.promises.readdir(jobPath);
-            
-            // First process important documents
-            for (const targetFile of criticalFiles) {
-                const matchingFiles = allFiles.filter(file => 
-                    file.toLowerCase() === targetFile.toLowerCase());
-                
-                if (matchingFiles.length > 0) {
-                    const file = matchingFiles[0];
-                    const fullPath = path.join(jobPath, file);
-                    
-                    if (fs.statSync(fullPath).isFile()) {
-                        try {
-                            const content = await fs.promises.readFile(fullPath, 'utf8');
-                            fileContents.set(file, content);
-                            logger.info(`Read file: ${file}, size: ${content.length}`);
-                        } catch (error) {
-                            logger.error(`Error reading file ${file}: ${error}`);
-                        }
-                    }
-                }
-            }
-            
-            // If some important files are not found, log the log
-            criticalFiles.forEach(file => {
-                if (!fileContents.has(file)) {
-                    logger.info(`Warning: Important file not found: ${file}`);
-                }
-            });
-            
-        } catch (error) {
-            logger.error(`Error reading job files: ${error}`);
+    /**
+     * 让用户选择要分析的Job
+     */
+    async function selectJobFolder(): Promise<string | null> {
+        const jobFolders = await getCosmosJobFolders();
+        
+        if (jobFolders.length === 0) {
+            vscode.window.showErrorMessage('未找到Cosmos job文件夹。请确认SCOPE作业已执行并生成了临时文件。');
+            return null;
         }
 
-        return fileContents;
+        const quickPickItems = jobFolders.map(folder => ({
+            description: `Job ID: ${folder.match(/\[.*?\]\s*(.+)/)?.[1]?.trim() || folder}`,
+            label: folder,
+            detail: `路径: ${require('path').join(tempPath, folder)}`
+        }));
+
+        const selectedJob = await vscode.window.showQuickPick(quickPickItems, {
+            placeHolder: '请选择要分析的 Cosmos Job',
+            title: 'SCOPE 性能分析 - 选择作业'
+        });
+
+        return selectedJob ? require('path').join(tempPath, selectedJob.label) : null;
     }
 
-	// Extract key content from file to avoid exceeding LM context limits
-	function extractKeyContent(jobFolder:string, fileName: string, content: string): string {
-		const fullPath = path.join(tempPath, jobFolder, fileName);
-
-		// Extract key content based on file type
-		if (fileName === 'scope.script') {
-			// Preserve complete script content
-			return content;
-		} else if (fileName === '__ScopeRuntimeStatistics__.xml') {
-			// Extract entire job view 
-			keyAnalysis = analyzeScopeRuntimeStatistics(fullPath);
-			return formatStatisticsReport(keyAnalysis);
-		} else if (fileName === 'ScopeVertexDef.xml') {
-			// Extract vertex operator view for each vertex
-			return parseAndAnalyzeScopeVertices(fullPath, keyAnalysis);
-		} else if (fileName === '__ScopeCodeGen__.dll.cs') {
-			return content;
-		} else {
-			// For other files, truncate if too large
-			const maxSize = 5000;
-			if (content.length > maxSize) {
-				return content.substring(0, maxSize) + `...(truncated, original size: ${content.length})`;
-			}
-			return content;
-		}
-    }
-
-    // Intent detection
-    async function isOptimizationRelatedQuery(query: string, token: vscode.CancellationToken): Promise<boolean> {
+	/**
+	 * 判断用户查询是否与性能优化相关
+	 * @param query 用户查询
+	 * @param token 取消令牌
+	 * @returns 是否与性能优化相关
+	 */
+	async function isOptimizationRelatedQuery(query: string, token: vscode.CancellationToken): Promise<boolean> {
 		//Try to get smaller/faster models for intent detection to avoid wasting big model resources
-		const chatModels = await vscode.lm.selectChatModels({family: 'gpt-4o-mini'});
+		const chatModels = await vscode.lm.selectChatModels({family: 'gpt-4o'});
 		if (!chatModels || chatModels.length === 0) {
 			logger.warn("No chat models available, falling back to keyword matching");
 			// back to the key words matching
@@ -167,263 +257,265 @@ export function activate(context: vscode.ExtensionContext) {
 				query.toLowerCase().includes('problem');
 		}
 	}
-	
-    vscode.chat.createChatParticipant("scope-opt-agent", async (request, context, response, token) => {
-        const userQuery = request.prompt.toLowerCase();
-        // Access conversation history
-        const conversationHistory = conversationManager.getHistory();
-		logger.info(`Received query : ${userQuery}`);
 
+    /**
+     * 执行完整的AI Agent工作流
+     */
+    async function runAgentWorkflow(userInput: string, context: AgentContext, response: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<void> {
+        try {
+            // 初始化Agent
+            const initialized = await scopeAgent.initialize();
+            if (!initialized) {
+                response.markdown("❌ **Agent初始化失败**\n\n请检查语言模型配置。");
+                return;
+            }
 
-        // Determine whether the user's problem is about scope script optimization
-        // const isOptimizationQuery = userQuery.toLowerCase().includes('job') || 
-        //     userQuery.toLowerCase().includes('optimize') || 
-        //     userQuery.toLowerCase().includes('performance') ||
-        //     userQuery.toLowerCase().includes('slow') ||
-        //     userQuery.toLowerCase().includes('bottleneck') ||
-		// 	userQuery.toLowerCase().includes('problem') || 
-        //     userQuery.toLowerCase().includes('优化') || 
-        //     userQuery.toLowerCase().includes('性能');
+            response.markdown("🤖 **AI Agent开始工作...**\n\n");
 
-		const isOptimizationQuery = await isOptimizationRelatedQuery(userQuery, token);
-		
+            // 如果涉及性能分析，让用户选择job
+            const isPerformanceQuery = await isOptimizationRelatedQuery(userInput, token);
+            
+            let selectedJobFolder: string | null = null;
+            if (isPerformanceQuery) {
+                response.markdown("📁 **选择分析目标**\n\n正在检查可用的SCOPE作业文件夹...\n");
+                selectedJobFolder = await selectJobFolder();
+                
+                if (!selectedJobFolder) {
+                    response.markdown("❌ **未选择作业**\n\n分析已取消。请确保有SCOPE作业文件可供分析。");
+                    return;
+                }
+                
+                response.markdown(`✅ **已选择作业**: ${require('path').basename(selectedJobFolder)}\n\n`);
+                
+                // 更新context中的工作空间状态
+                context.workspaceState.currentJobFolder = selectedJobFolder;
+                context.workspaceState.scopeFilesAvailable = true;
+            }
 
-		const chatModels = await vscode.lm.selectChatModels({family : 'gpt-4o'});
-		if (!chatModels || chatModels.length === 0) {
-			response.markdown('Sorry, I couldn\'t complete that request.');
-			return;
-		}
+            // 步骤1: 思考
+            response.markdown("🧠 **思考阶段** - 分析您的需求...\n");
+            const thought = await scopeAgent.think(userInput, context);
+            
+            response.markdown(`✅ **意图理解**: ${thought.intent}\n`);
+            response.markdown(`📊 **信心度**: ${(thought.confidence * 100).toFixed(1)}%\n`);
+            response.markdown(`🎯 **问题类型**: ${thought.problemType}\n\n`);
 
-		// just answer user's question
-		if (!isOptimizationQuery) {
-			const mes = [
-				vscode.LanguageModelChatMessage.Assistant("SCOPE (Structured Computation Optimized for Parallel Execution) is a SQL-like scripting language for big data processing in Microsoft Cosmos. You are an advanced expert specializing in this language. Please help users with their Scope script-related questions and problems."),
-				vscode.LanguageModelChatMessage.User(userQuery),
-			];
-			const chatRequest = await chatModels[0].sendRequest(mes, undefined, token);
-			for await (const data of chatRequest.text) {
-				response.markdown(data);
-			}
-			return;
-		}
-		
-		 // Get the list of Cosmos job folders
-		 response.markdown("I'll assist you in analyzing your SCOPE job. Currently searching for local Cosmos job folders... \n\n");
-		 const jobFolders = await getCosmosJobFolders();
- 
-		 if (jobFolders.length === 0) {
-			 response.markdown("No Cosmos job folders found. Please verify that Cosmos jobs exist in your temp directory.\n");
-			 return;
-		 }
- 
-		 // Create quick pick items
-		 const quickPickItems = jobFolders.map(folder => {
-			 // Try to extract job ID from folder name
-			 let jobId = folder;
-			 const match = folder.match(/\[.*?\]\s*(.+)/);
-			 if (match && match[1]) {
-				 jobId = match[1].trim();
-			 }
- 
-			 return {
-				 description: `Job ID: ${jobId}`,
-				 label: folder
-			 };
-		 });
- 
-		 // Show selection dialog
-		 response.markdown("I found the following Cosmos jobs. Which one would you like to analyze?\n\n");
-		 const selectedJob = await vscode.window.showQuickPick(quickPickItems, {
-			 placeHolder: 'Please select a job ID in the popup window. \n'
-		 });
- 
-		 if (!selectedJob) {
-			 response.markdown("No job selected. Please ask again if you need analysis.\n");
-			 return;
-		 }
- 
-		 // Notify user that files are being read
-		 response.markdown(`Reading files for job ${selectedJob.label}, this may take a moment...\n\n`);
-		 
-		 // Read files from selected job
-		 const jobFiles = await readJobFiles(selectedJob.label);
-		 
-		 if (jobFiles.size === 0) {
-			 response.markdown("No files could be read from the job folder. Please verify the job folder contents are complete.\n");
-			 return;
-		 }
-		 
-		 response.markdown(`Already read ${jobFiles.size} files, analyzing...\n`);
-		
-		 // Summarize file content
-		 const summarizedFiles = new Map<string, string>();
-	
-		 // Process critical files
-		 for (const fileName of criticalFiles) {
-			 if (jobFiles.has(fileName)) {
-				 response.markdown(`- Reading file ${fileName}...\n`);
-				 const content = jobFiles.get(fileName)!;
-				 const analysis = await extractKeyContent(selectedJob.label, fileName, content);
-				 summarizedFiles.set(fileName, analysis);
+            // 步骤2: 规划
+            response.markdown("📋 **规划阶段** - 制定执行计划...\n");
+            const plan = await scopeAgent.plan(thought, context);
+            
+            response.markdown(`📝 **执行计划**: ${plan.steps.length}个步骤\n`);
+            response.markdown(`⏱️ **预估时间**: ${plan.estimatedTime}ms\n`);
+            response.markdown(`🔧 **所需工具**: ${plan.steps.map(s => s.tool).join(', ')}\n\n`);
 
-				 logger.info("-------------------------------------------------------------------------------------------");
-				 logger.info(analysis);
-			 }
-		 }
-		 
-		 response.markdown(`\n File content analysis complete, generating optimization suggestions...\n`);
+            // 步骤3: 执行
+            response.markdown("⚡ **执行阶段** - 调用工具完成任务...\n");
+            
+            for (let i = 0; i < plan.steps.length; i++) {
+                const step = plan.steps[i];
+                response.markdown(`🔧 执行步骤 ${i + 1}/${plan.steps.length}: ${step.description}\n`);
+                
+                // 这里可以添加进度更新
+                if (token.isCancellationRequested) {
+                    response.markdown("⚠️ **操作已取消**\n");
+                    return;
+                }
+            }
+            
+            const result = await scopeAgent.execute(plan, context);
+            
+            if (result.success) {
+                response.markdown(`✅ **执行成功**\n`);
+                response.markdown(`⏱️ **实际耗时**: ${result.executionTime}ms\n`);
+                response.markdown(`📊 **结果信心度**: ${(result.confidence * 100).toFixed(1)}%\n\n`);
+                
+                // 显示结果
+                response.markdown("## 📊 分析结果\n\n");
+                response.markdown(result.explanation + "\n\n");
+                
+                if (result.suggestions && result.suggestions.length > 0) {
+                    response.markdown("## 💡 优化建议\n\n");
+                    result.suggestions.forEach((suggestion, index) => {
+                        response.markdown(`${index + 1}. ${suggestion}\n`);
+                    });
+                    response.markdown("\n");
+                }
+                
+                if (result.nextSteps && result.nextSteps.length > 0) {
+                    response.markdown("## 🔜 建议后续步骤\n\n");
+                    result.nextSteps.forEach((step, index) => {
+                        response.markdown(`${index + 1}. ${step}\n`);
+                    });
+                    response.markdown("\n");
+                }
+            } else {
+                response.markdown(`❌ **执行失败**: ${result.explanation}\n\n`);
+                
+                if (result.errors && result.errors.length > 0) {
+                    response.markdown("**错误详情:**\n");
+                    result.errors.forEach(error => {
+                        response.markdown(`- ${error.message}\n`);
+                    });
+                }
+            }
 
-		
-        // Build system prompt information to guide LLM for analysis
-		 let systemPrompt = `SCOPE (Structured Computation Optimized for Parallel Execution) is a SQL-like scripting language for big data processing in Microsoft Cosmos. You are an advanced expert specializing in this language and performance analysis and optimization, skilled at using "low-level C# files" as diagnostic references to understand execution plans, operator assignments, and root causes of performance issues to rewrite the user's scope.script. Please refer to the two files open in my current workspace:
-1) scope.script — this is the user-written script, and the file we ultimately want to modify;
-2) __ScopeCodeGen__.dll.cs — this is C# code automatically generated by the Scope compiler, used only for analyzing or identifying underlying execution plan bottlenecks. Do **not** modify it, as it's not a file for users to edit.`
-		 
-		/**let userPrompt = `Based on the user's request ${request.prompt}, please analyze the vertices or operators you've identified and provide "original code → modified code" examples.
+            // 分析完成
 
-You need to complete the following tasks:  
-- Analyze the statistics to identify the most time-consuming or data/memory-intensive operators or vertices. If you need to explain a vertex's or operator's execution time / row count / memory usage, only reference the key numbers without repeating large statistical tables.  
-- Find the corresponding operator names or classes in __ScopeCodeGen__.dll.cs for these time-consuming/data-intensive/memory-intensive operators;  
-- Then locate the corresponding operations or logical positions in scope.script;  
-- Provide specific rewrite plans for scope.script ("original code → modified code"). Do not modify __ScopeCodeGen__.dll.cs;  
-- Never output instructions to modify the C# file, only output modifications to scope.script.
+            // 记录对话
+            addToConversationHistory('user', userInput);
+            addToConversationHistory('agent', result.explanation, {
+                confidence: result.confidence,
+                toolsUsed: result.toolsUsed,
+                executionTime: result.executionTime
+            });
 
-[Response Requirements]
-- Don't use irrelevant pseudo-examples or examples in other languages like Python. Use the exact scope.script snippets I provided, maintaining consistent context and operator names.
-- For each issue, paste only the few lines that need modification (from scope.script).
-- Provide "modified code" and explain how this change improves performance (e.g., predicate pushdown, reducing sort keys, early filtering, switching to partition joins, avoiding unnecessary data expansion, reducing unused columns, avoiding SELECT *, optimizing UDFs, etc.).
-- Reference numbers from the statistics (such as 3.33GB memory, 77h43m inclusive time, 4 billion rows) in your explanations to demonstrate why this is a bottleneck.
-- Never paste entire unmodified code blocks, only show the lines that are changing for comparison.
-- If line numbers cannot be determined, use comments.`;**/
+        } catch (error) {
+            logger.error(`Agent workflow failed: ${error}`);
+            response.markdown(`❌ **AI Agent执行出错**: ${error instanceof Error ? error.message : String(error)}\n\n`);
+            response.markdown("请尝试简化您的请求或联系技术支持。");
+        }
+    }
 
-		 let userPrompt = `Based on the user's request ${request.prompt}, perform the following analysis and optimizations for the provided Scope script and provide "original code → modified code" for suggested changes:
-		 ## Steps to Follow:
-		 	1. Analyze Statistical Information:
-				* Identify the high runtime, high data volume, or high memory consumption operators or vertices based on Overall Performance Statistics and Per-Node Performance Statistics Analysis.
-				* Pay particular attention to whether these high-consumed vertices contain user-defined functions (UDFs), as they are treated as black boxes by the Scope compiler and doss not optimize it.
-				* When referencing specific performance statistics, mention only the key metrics (e.g., "3.33GB memory," "77h43m inclusive time," or "4 billion rows") without pasting extensive tables.
-			2. Identify Corresponding Operators in Scope Script:
-				* For each bottleneck, locate the corresponding **operator or class name** in __ScopeCodeGen__.dll.cs. Instead of just returning class names, explain their role in the query and causes of performance.
-			3. Provide Specific Optimization Suggestions (Scope Script Only):
-				* For each modification, do NOT mix Scope Script and __ScopeCodeGen__.dll.cs code. Only modify Scope Script, and strictly follow this template:
-					**Original Code**
-					(Paste specific lines from scope.script to be modified)
+    // ========== Chat Participant ==========
 
-					**Modified Code**
-					(Paste only the modified lines)
+    /**
+     * 注册聊天参与者
+     */
+    const chatParticipant = vscode.chat.createChatParticipant("scope-ai-agent", async (request, context, response, token) => {
+        const userQuery = request.prompt.trim();
+        logger.info(`🗣️ Received user query: "${userQuery}"`);
 
-					**Explanation of Optimization**
-						- Explain clearly how this change improves performance.
-						- Reference specific numbers from statistical analysis to justify the necessity of the optimization.
-						- Consider the following common optimization scenarios as guidance:
-							- Predicate pushdown
-							- Broadcast join for small tables, like INNER BRODCASTRIGHT JOIN
-							- Avoid unnecessary columns
-							- Rewrite user-defined functions with built-in Scope operators
-							- Handling data skew in large-table joins or aggregations using a different/compound set of columns, like GROUP BY a,b,c if a is highly skewed
-							- Ensuring JOIN conditions yield unique matches to avoid duplicate data
-							- Minimizing memory and CPU overhead from ORDER BY or GROUP BY through indexing or field optimization
-							- Annotations of user defined operator/function that can help change degree of parallelism of the stage
-							- When creating a structured stream always CLUSTERED BY and SORTED BY
-							- Provide scope compiler hints for skewed joins or aggregations if data distribution is unknown, such as:
-    							- SKEW hints in Syntax, SKEW identifies the source of skewed keys from left or right side: 
-									[SKEWJOIN=(SKEW=FROMLEFT|FROMRIGHT|FROMBOTH,REPARTITION=FULLJOIN|SPLITJOIN|SPLITBROADCASTJOIN,LEVEL=Integer,MINPARTITIONCOUNT=Integer,PARTITIONCOUNT=Integer)]
-									statement;
-		 							- code sample:
-		 								[SKEWJOIN=(SKEW=FROMLEFT, REPARTITION=FULLJOIN)]
-										Rs = SELECT Rs1.key, Rs1.col2, Rs2.col3 FROM Rs1 INNER JOIN Rs2 ON Rs1.key==Rs2.key;
-								- Data hints in Syntax: 
-									[ROWCOUNT=<integer>] | [ROWSIZE=<integer>] | [LOWDISTINCTNESS(<col1>,<col2>,…,<coln>)] | [[SKEWFACTOR(<col1>,<col2>,…,<coln>)=<float>]]
-									statement;
-									- code sample:
-										// hint says that each row is about 1KB. 
-										[ROWSIZE=1000]     
-										PROCESS x PRODUCE A, B, C USING MyProcessor();
-								- PARTITION hints in Syntax: 
-									[PARTITION<(column_1, ... column_n)>=(PARTITIONFUNCTION=UNKNOWN|SERIAL|RANGE|HASH|DIRECT|REFINERANGE|PARALLEL|ROUNDROBIN,<if RANGE: PARTITIONSPEC="path_meta",>  PARITIONCOUNT=integer,  PARTITIONSIZE=integer,  MAXINTCANDIDATE=integer,  REQUIRED=bool)] 
-									statement;
-									- code sample:
-										[PARTITION(A,B,C,D) = (PARTITIONFUNCTION=REFINERANGE, PARTITIONSIZE=3000000, MAXINTCANDIDATE=6)]
-										x = SSTREAM @"test/Scope/Input/SStreamRangeSort.ss";
-							
+        try {
+            // 检查语言模型可用性
+            const isModelAvailable = await checkLanguageModelAvailability();
+            if (!isModelAvailable) {
+                showLanguageModelError(response);
+                return;
+            }
 
-		## Notes:
-		- **Do not modify the C# files; restrict changes to the scope.script file only.**
-		- Ensure recommended code changes are syntactically correct and **don't fabricate the non-existent hints that are not given**.
-		- Avoid generic pseudo-examples or code from other languages; the examples must be strictly related to the provided script context.
-		- When modifying user-defined functions, clearly suggest ways to mitigate their black-box effect (e.g., add comments explaining better parallelization or data partitioning methods).`;
+            // 创建Agent上下文
+            const agentContext = createAgentContext(userQuery);
 
+            // 执行AI Agent工作流
+            await runAgentWorkflow(userQuery, agentContext, response, token);
+
+        } catch (error) {
+            logger.error(`Chat participant error: ${error}`);
+            response.markdown(`❌ **处理请求时出错**: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
+
+    // ========== 演示命令 ==========
+
+    // 完整Agent周期演示
+    const demoFullCycleCommand = vscode.commands.registerCommand('scope-ai-agent.demo.fullCycle', async () => {
+        await agentDemo.demonstrateFullAgentCycle();
+        vscode.window.showInformationMessage('AI Agent完整周期演示完成');
+    });
+
+    // 意图识别演示
+    const demoIntentCommand = vscode.commands.registerCommand('scope-ai-agent.demo.intentRecognition', async () => {
+        await agentDemo.demonstrateIntentRecognition();
+        vscode.window.showInformationMessage('意图识别演示完成');
+    });
+
+    // 工具系统演示
+    const demoToolsCommand = vscode.commands.registerCommand('scope-ai-agent.demo.toolSystem', async () => {
+        await agentDemo.demonstrateToolSystem();
+        vscode.window.showInformationMessage('工具系统演示完成');
+    });
+
+    // 学习能力演示
+    const demoLearningCommand = vscode.commands.registerCommand('scope-ai-agent.demo.learning', async () => {
+        await agentDemo.demonstrateLearningCapability();
+        vscode.window.showInformationMessage('学习能力演示完成');
+    });
+
+    // Agent架构信息
+    const showArchitectureCommand = vscode.commands.registerCommand('scope-ai-agent.info.architecture', () => {
+        const info = `
+## SCOPE AI Agent 架构信息
+
+**Agent ID**: ${scopeAgent.id}
+**Agent名称**: ${scopeAgent.name}
+**版本**: v2.0
+
+### 核心能力
+${scopeAgent.capabilities.map(cap => `- ${cap}`).join('\n')}
+
+### 已注册工具
+${toolRegistry.getAllTools().map(tool => `- ${tool.name} (${tool.category})`).join('\n')}
+
+### 性能统计
+${JSON.stringify(scopeAgent.getPerformanceStats(), null, 2)}
+        `;
+
+        vscode.window.showInformationMessage(info, { modal: true });
+    });
+
+    // Agent能力信息
+    const showCapabilitiesCommand = vscode.commands.registerCommand('scope-ai-agent.info.capabilities', () => {
+        const capabilities = scopeAgent.capabilities.join('\n• ');
+        vscode.window.showInformationMessage(`SCOPE AI Agent 能力:\n\n• ${capabilities}`, { modal: true });
+    });
+
+    // 可用工具信息
+    const showToolsCommand = vscode.commands.registerCommand('scope-ai-agent.info.tools', () => {
+        const tools = toolRegistry.getAllTools()
+            .map(tool => `• ${tool.name}: ${tool.description}`)
+            .join('\n');
+        vscode.window.showInformationMessage(`可用工具:\n\n${tools}`, { modal: true });
+    });
+
+    // 分析SCOPE脚本命令（传统兼容性）
+    const analyzeScriptCommand = vscode.commands.registerCommand('scope-opt-agent.analyzeScript', async () => {
+        const agentContext = createAgentContext('分析当前SCOPE脚本的性能');
         
-		const csTextEditor = await vscode.window.showTextDocument(vscode.Uri.file(path.join(tempPath, selectedJob.label, criticalFiles[1])));
-		const scopeTextEditor = await vscode.window.showTextDocument(vscode.Uri.file(path.join(tempPath, selectedJob.label, criticalFiles[0])));
+        try {
+            const initialized = await scopeAgent.initialize();
+            if (!initialized) {
+                vscode.window.showErrorMessage('Agent初始化失败，请检查语言模型配置');
+                return;
+            }
 
+            vscode.window.showInformationMessage('AI Agent正在分析SCOPE脚本...');
+            
+            const thought = await scopeAgent.think('分析SCOPE脚本性能', agentContext);
+            const plan = await scopeAgent.plan(thought, agentContext);
+            const result = await scopeAgent.execute(plan, agentContext);
+            
+            if (result.success) {
+                vscode.window.showInformationMessage(`分析完成！发现了${result.suggestions?.length || 0}个优化建议`);
+            } else {
+                vscode.window.showErrorMessage(`分析失败: ${result.explanation}`);
+            }
+        } catch (error) {
+            logger.error(`Analyze script command failed: ${error}`);
+            vscode.window.showErrorMessage(`分析脚本时出错: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    });
 
-		// Add analysis results and summary
-		let contextMessage = `## Here are my job statistics\n`;
-		
-		if (summarizedFiles.has('__ScopeRuntimeStatistics__.xml')) {
-			contextMessage += `### Overall Performance Statistics Analysis\n${summarizedFiles.get('__ScopeRuntimeStatistics__.xml')}\n`;
-		}
+    // ========== 注册所有命令和组件 ==========
 
-		if (summarizedFiles.has('ScopeVertexDef.xml')) {
-			contextMessage += `### Per-Node Performance Statistics Analysis\n${summarizedFiles.get('ScopeVertexDef.xml')}\n`;
-		}
+    context.subscriptions.push(
+        chatParticipant,
+        demoFullCycleCommand,
+        demoIntentCommand,
+        demoToolsCommand,
+        demoLearningCommand,
+        showArchitectureCommand,
+        showCapabilitiesCommand,
+        showToolsCommand,
+        analyzeScriptCommand
+    );
 
-		// Get content from active editors
-		const messages = [
-			vscode.LanguageModelChatMessage.Assistant(systemPrompt),
-			vscode.LanguageModelChatMessage.User(`### __ScopeCodeGen__.dll.cs\n${await csTextEditor.document.getText()}\n\n`),
-			vscode.LanguageModelChatMessage.User(`### scope.script \n${await scopeTextEditor.document.getText()}\n\n`),
-			vscode.LanguageModelChatMessage.User(contextMessage),
-			vscode.LanguageModelChatMessage.User(userPrompt),
-		];
-
-		// Add conversation history after the system message but before the new user inputs
-		if (conversationHistory.length > 0) {
-			// Insert history after the system message
-			messages.splice(1, 0, ...conversationHistory);
-		}
-
-		
-		try {
-			response.markdown("Analyzing data and generating optimization suggestions...\n");
-			const chartRequest = await chatModels[0].sendRequest(messages, undefined, token);
-			
-			// Clear previous messages
-			response.markdown("");
-			
-			// Use push method for streaming output
-			let fullResponse = "";
-			for await (const responseToken of chartRequest.text) {
-				fullResponse += responseToken;
-				response.push(new vscode.ChatResponseMarkdownPart(responseToken));
-			}
-
-			 // Add user question and AI response to conversation history
-			 conversationManager.addMessage(vscode.LanguageModelChatMessage.User(`### __ScopeCodeGen__.dll.cs\n${await csTextEditor.document.getText()}\n\n`));
-			 conversationManager.addMessage(vscode.LanguageModelChatMessage.User(`### scope.script \n${await scopeTextEditor.document.getText()}\n\n`));
-			 conversationManager.addMessage(vscode.LanguageModelChatMessage.User(contextMessage));
-			 conversationManager.addMessage(vscode.LanguageModelChatMessage.Assistant(fullResponse));
-			 
-		} catch (error) {
-			logger.error(`Error during LLM analysis: ${error}`);
-			response.markdown(`Error occurred during analysis: ${error}. Please try asking again or simplify your question.`);
-		}
-	});
-
-	// Add a command to manually trigger analysis
-	let disposable = vscode.commands.registerCommand('scope-opt-agent.analyzeScript', async () => {
-		await vscode.commands.executeCommand('vscode.chat.open', 'scope-opt-agent');
-		await vscode.commands.executeCommand('chat.action.append', 'Please analyze my Scope script performance issues and provide optimization suggestions');
-	});
-
-
-	// Cleanup function 
-	context.subscriptions.push(disposable);
-	context.subscriptions.push({ dispose: () => logger.dispose() });
-	
-	// Show log window
-	logger.show();
+    logger.info(`🎉 SCOPE AI Agent Extension fully activated with ${toolRegistry.getAllTools().length} tools`);
 }
 
-export function deactivate() {}
+/**
+ * 扩展停用函数
+ */
+export function deactivate() {
+    // 清理资源
+    console.log('SCOPE AI Agent Extension deactivated');
+}

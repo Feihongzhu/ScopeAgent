@@ -1,13 +1,16 @@
 {
-  "name": "scope-opt-agent",
-  "displayName": "scope-opt-agent",
-  "description": "Analyze and optimize your SCOPE scripts through execution job graph analysis and performance insights to improve big data job efficiency.",
-  "version": "0.0.1",
+  "name": "scope-ai-agent",
+  "displayName": "SCOPE AI Agent",
+  "description": "A comprehensive AI Agent system for Microsoft SCOPE script performance optimization with Think-Plan-Execute architecture and intelligent tool calling.",
+  "version": "1.0.0",
   "icon": "img/logo.jpg",
   "engines": {
     "vscode": "^1.97.0"
   },
   "categories": [
+    "AI",
+    "Machine Learning",
+    "Data Science",
     "Other"
   ],
   "activationEvents": [],
@@ -18,25 +21,51 @@
   "contributes": {
     "chatParticipants": [
       {
-        "id": "scope-opt-agent",
-        "name": "scopeagent",
-        "description": "Help to optimize my SCOPE job"
+        "id": "scope-ai-agent",
+        "name": "agent",
+        "description": "An intelligent AI agent for SCOPE script performance optimization with autonomous analysis and recommendation capabilities"
       }
     ],
-    
     "commands": [
       {
-        "command": "scope-opt-agent.getActiveWebviewFromTabs",
-        "title": "get active Webview"
+        "command": "scope-ai-agent.demo.fullCycle",
+        "title": "Demonstrate Full Agent Cycle",
+        "category": "SCOPE AI Agent"
       },
       {
-        "command": "scope-opt-agent.analyze",
-        "title": "Analyze Scope Script"
+        "command": "scope-ai-agent.demo.intentRecognition",
+        "title": "Demonstrate Intent Recognition",
+        "category": "SCOPE AI Agent"
       },
       {
-        "command": "scope-opt-agent.clearHistory",
-        "title": "Clear Conversation History",
-        "category": "Scope Opt Agent"
+        "command": "scope-ai-agent.demo.toolSystem",
+        "title": "Demonstrate Tool System",
+        "category": "SCOPE AI Agent"
+      },
+      {
+        "command": "scope-ai-agent.demo.learning",
+        "title": "Demonstrate Learning Capability",
+        "category": "SCOPE AI Agent"
+      },
+      {
+        "command": "scope-ai-agent.info.architecture",
+        "title": "Show Agent Architecture Info",
+        "category": "SCOPE AI Agent"
+      },
+      {
+        "command": "scope-ai-agent.info.capabilities",
+        "title": "Show Agent Capabilities",
+        "category": "SCOPE AI Agent"
+      },
+      {
+        "command": "scope-ai-agent.info.tools",
+        "title": "Show Available Tools",
+        "category": "SCOPE AI Agent"
+      },
+      {
+        "command": "scope-opt-agent.analyzeScript",
+        "title": "Analyze SCOPE Script",
+        "category": "SCOPE AI Agent"
       }
     ]
   },
@@ -62,6 +91,7 @@
   "devDependencies": {
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
+    "@types/uuid": "^9.0.8",
     "@types/vscode": "^1.97.0",
     "@types/xmldom": "^0.1.34",
     "@typescript-eslint/eslint-plugin": "^8.22.0",
@@ -74,7 +104,9 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
+    "uuid": "^9.0.1",
     "xmldom": "^0.6.0",
-    "xpath": "^0.0.34"
+    "xpath": "^0.0.34",
+    "zod": "^3.22.4"
   }
 }
