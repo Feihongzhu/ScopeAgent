@@ -182,38 +182,7 @@ const SCOPE_FILE_DEFINITIONS: SCOPEFileDefinition[] = [
     },
     
     // 补充分析文件
-    {
-        fileType: "JOB_INFO",
-        pattern: /^JobInfo\.xml$/i,
-        description: "作业的基本信息，如Job ID、提交时间、作业类型、资源需求等",
-        readerTool: "XMLInfoReader",
-        priority: 6,
-        category: 'metadata',
-        required: false,
-        processingStrategy: 'basic_info_extraction'
-    },
     
-    {
-        fileType: "ALGEBRA_PLAN",
-        pattern: /^Algebra\.xml$/i,
-        description: "以XML格式记录作业执行的查询计划，展现底层算子逻辑与依赖关系",
-        readerTool: "AlgebraPlanReader",
-        priority: 7,
-        category: 'execution_plan',
-        required: false,
-        processingStrategy: 'plan_analysis'
-    },
-    
-    {
-        fileType: "WARNINGS",
-        pattern: /^__Warnings__\.xml$/i,
-        description: "编译或运行阶段的警告信息，反映可能潜在影响性能的点",
-        readerTool: "WarningsReader",
-        priority: 7,
-        category: 'diagnostics',
-        required: false,
-        processingStrategy: 'warning_categorization'
-    },
     
     {
         fileType: "RUNTIME_STATS",
@@ -237,38 +206,7 @@ const SCOPE_FILE_DEFINITIONS: SCOPEFileDefinition[] = [
         processingStrategy: 'error_analysis'
     },
     
-    {
-        fileType: "PROFILE_DATA",
-        pattern: /^profile$/i,
-        description: "作业性能分析数据，可用来深入分析节点级别的资源占用情况",
-        readerTool: "ProfileDataReader",
-        priority: 5,
-        category: 'profiling',
-        required: false,
-        processingStrategy: 'performance_profiling'
-    }
 ];
-```
-
-### 4.3 动态文件发现系统
-
-```typescript
-class FileDiscoverySystem {
-    /**
-     * 自动发现和分类SCOPE作业文件
-     */
-    async discoverFiles(jobPath: string): Promise<DiscoveredFile[]>;
-    
-    /**
-     * 根据文件内容智能识别文件类型
-     */
-    async identifyFileType(filePath: string): Promise<SCOPEFileDefinition | null>;
-    
-    /**
-     * 验证必需文件是否存在
-     */
-    validateRequiredFiles(discoveredFiles: DiscoveredFile[]): ValidationResult;
-}
 ```
 
 ## 5. 工具系统设计
@@ -446,7 +384,7 @@ class CodeOptimizationGenerator implements AnalysisTool {
 ```mermaid
 graph TD
     A[用户查询] --> B[Agent框架启动]
-    B --> C[文件发现与读取阶段]
+    B --> C[文件读取阶段]
     C --> D[性能分析阶段]  
     D --> E[建议生成阶段]
     E --> F[格式化返回]

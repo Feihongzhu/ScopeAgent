@@ -11,8 +11,6 @@ import {
     AgentResult,
     AgentLearning,
     AgentFeedback,
-    Tool,
-    ToolResult,
     PlanStep,
     ToolCall,
     PerformanceMetrics,
@@ -29,6 +27,7 @@ import {
     FallbackStrategy,
     ExecutionError
 } from '../types/AgentTypes';
+import { AnalysisTool, ToolInput, ToolOutput } from '../framework/types/FrameworkTypes';
 
 /**
  * 智能SCOPE性能优化AI Agent
@@ -51,7 +50,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     ];
 
     // 核心服务和状态
-    private tools: Map<string, Tool> = new Map();
+    private tools: Map<string, AnalysisTool> = new Map();
     private memory: Map<string, MemoryItem> = new Map();
     private languageModel: LanguageModelService;
     private logger: Logger;
@@ -286,7 +285,7 @@ export class ScopeOptimizationAgent implements AgentCore {
                             tool: step.tool,
                             result: toolResult,
                             success: true,
-                            executionTime: toolResult.executionTime
+                            executionTime: toolResult.metadata?.executionTime || 0
                         });
                         
                         if (!toolsUsed.includes(step.tool)) {
@@ -295,7 +294,7 @@ export class ScopeOptimizationAgent implements AgentCore {
                         
                         this.logger.info(`✅ Step ${step.id} completed successfully`);
                     } else {
-                        throw new Error(`Tool execution failed: ${toolResult.message}`);
+                        throw new Error(`Tool execution failed: ${toolResult.errors?.join(', ') || 'Unknown error'}`);
                     }
 
                 } catch (stepError) {
@@ -481,14 +480,16 @@ export class ScopeOptimizationAgent implements AgentCore {
 
             this.logger.info(`🔧 Using tool: ${toolName}`);
             
-            // 验证参数
-            const validation = tool.validate(params);
-            if (!validation.valid) {
-                throw new Error(`Tool validation failed: ${validation.errors.join(', ')}`);
-            }
+            // 构造工具输入
+            const toolInput: ToolInput = {
+                filePath: params.filePath || '',
+                fileType: params.fileType || '',
+                analysisGoal: params.analysisGoal || 'general_analysis',
+                context: undefined  // 简化版本暂时不传递context
+            };
 
             // 执行工具
-            const result = await tool.execute(params, context);
+            const result = await tool.execute(toolInput);
             
             this.logger.info(`🔧 Tool ${toolName} executed successfully`);
             return result;
@@ -502,7 +503,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     /**
      * 获取可用工具列表
      */
-    getAvailableTools(): Tool[] {
+    getAvailableTools(): any[] {
         return Array.from(this.tools.values());
     }
 
@@ -573,7 +574,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     /**
      * 注册工具
      */
-    registerTool(tool: Tool): void {
+    registerTool(tool: AnalysisTool): void {
         this.tools.set(tool.name, tool);
         this.logger.info(`🔧 Registered tool: ${tool.name} (${tool.category})`);
     }
@@ -757,18 +758,18 @@ export class ScopeOptimizationAgent implements AgentCore {
         };
     }
 
-    private async executeToolWithTimeout(tool: Tool, input: any, timeout: number, context?: AgentContext): Promise<ToolResult> {
+    private async executeToolWithTimeout(tool: AnalysisTool, input: ToolInput, timeout: number, context?: AgentContext): Promise<ToolOutput> {
         return new Promise((resolve, reject) => {
             const timer = setTimeout(() => {
                 reject(new Error(`Tool execution timeout after ${timeout}ms`));
             }, timeout);
 
-            tool.execute(input, context)
-                .then(result => {
+            tool.execute(input)
+                .then((result: ToolOutput) => {
                     clearTimeout(timer);
                     resolve(result);
                 })
-                .catch(error => {
+                .catch((error: any) => {
                     clearTimeout(timer);
                     reject(error);
                 });

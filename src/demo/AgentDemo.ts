@@ -1,7 +1,7 @@
 import * as vscode from 'vscode';
 import { ScopeOptimizationAgent } from '../core/ScopeAgent';
 import { AgentContext, WorkspaceState, UserPreferences, AgentFeedback } from '../types/AgentTypes';
-import { ToolRegistry } from '../tools/AgentTools';
+import { ToolRegistry } from '../framework/tools/ToolRegistry';
 import { Logger } from '../functions/logger';
 
 /**
