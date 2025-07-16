@@ -1412,123 +1412,183 @@ export class ScopeOptimizationAgent implements AgentCore {
             const runtimeFileCheck = securityChecks.find(check => check.fileName === '__ScopeRuntimeStatistics__.xml');
             if (this.tools.has('extractRuntime2') && runtimeFileCheck?.securityResult.safe) {
                 try {
+                    this.logger.info('📊 开始读取运行时统计数据...');
                     const runtimeTool = this.tools.get('extractRuntime2')!;
-                    const runtimeResult = await runtimeTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'RUNTIME_STATS',
-                        analysisGoal: 'runtime_analysis'
-                    });
+                    
+                    // 添加超时机制
+                    const runtimeResult = await Promise.race([
+                        runtimeTool.execute({
+                            filePath: runtimeFileCheck.filePath,
+                            fileType: 'RUNTIME_STATS',
+                            analysisGoal: 'runtime_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('运行时统计读取超时')), 30000))
+                    ]) as ToolOutput;
                     
                     if (runtimeResult.success && runtimeResult.data) {
                         runtimeStats = runtimeResult.data;
                         availableFiles.push('__ScopeRuntimeStatistics__.xml');
-                        this.logger.info(`✅ 成功收集运行时统计数据 (${this.securityManager.getConfig().maxFileSize}字节限制)`);
+                        this.logger.info(`✅ 成功收集运行时统计数据`);
+                    } else {
+                        this.logger.warn(`⚠️ 运行时统计数据读取失败: ${runtimeResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取运行时统计失败: ${error}`);
+                    this.logger.error(`❌ 读取运行时统计失败: ${error}`);
                 }
             } else if (runtimeFileCheck && !runtimeFileCheck.securityResult.safe) {
                 this.logger.warn(`🚫 运行时统计文件被安全检查阻止: ${runtimeFileCheck.securityResult.issues.join(', ')}`);
+            } else {
+                this.logger.warn(`⚠️ 未找到extractRuntime2工具或运行时统计文件`);
             }
             
             // 2. 尝试读取作业信息 - 作业状态和时间信息
-            if (this.tools.has('jobInfoReader')) {
+            const jobInfoFileCheck = securityChecks.find(check => check.fileName === 'JobInfo.xml');
+            if (this.tools.has('extractRuntime') && jobInfoFileCheck?.securityResult.safe) {
                 try {
-                    const jobInfoTool = this.tools.get('jobInfoReader')!;
-                    const jobInfoResult = await jobInfoTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'JOB_INFO',
-                        analysisGoal: 'job_analysis'
-                    });
+                    this.logger.info('📋 开始读取作业信息...');
+                    const jobInfoTool = this.tools.get('extractRuntime')!;
+                    
+                    const jobInfoResult = await Promise.race([
+                        jobInfoTool.execute({
+                            filePath: jobInfoFileCheck.filePath,
+                            fileType: 'JOB_INFO',
+                            analysisGoal: 'job_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('作业信息读取超时')), 15000))
+                    ]) as ToolOutput;
                     
                     if (jobInfoResult.success && jobInfoResult.data) {
                         jobInfo = jobInfoResult.data;
                         availableFiles.push('JobInfo.xml');
                         this.logger.info('✅ 成功收集作业信息');
+                    } else {
+                        this.logger.warn(`⚠️ 作业信息读取失败: ${jobInfoResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取作业信息失败: ${error}`);
+                    this.logger.error(`❌ 读取作业信息失败: ${error}`);
                 }
+            } else {
+                this.logger.warn(`⚠️ 未找到extractRuntime工具或作业信息文件`);
             }
             
             // 3. 尝试读取编译输出 - 编译性能和警告
-            if (this.tools.has('compileOutputReader')) {
+            const compileOutputFileCheck = securityChecks.find(check => check.fileName === '__ScopeCodeGenCompileOutput__.txt');
+            if (this.tools.has('CSCodeReader') && compileOutputFileCheck?.securityResult.safe) {
                 try {
-                    const compileOutputTool = this.tools.get('compileOutputReader')!;
-                    const compileResult = await compileOutputTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'COMPILE_OUTPUT',
-                        analysisGoal: 'compile_analysis'
-                    });
+                    this.logger.info('⚙️ 开始读取编译输出...');
+                    const compileOutputTool = this.tools.get('CSCodeReader')!;
+                    
+                    const compileResult = await Promise.race([
+                        compileOutputTool.execute({
+                            filePath: compileOutputFileCheck.filePath,
+                            fileType: 'COMPILE_OUTPUT',
+                            analysisGoal: 'compile_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('编译输出读取超时')), 20000))
+                    ]) as ToolOutput;
                     
                     if (compileResult.success && compileResult.data) {
                         compileOutput = compileResult.data;
                         availableFiles.push('__ScopeCodeGenCompileOutput__.txt');
                         this.logger.info('✅ 成功收集编译输出');
+                    } else {
+                        this.logger.warn(`⚠️ 编译输出读取失败: ${compileResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取编译输出失败: ${error}`);
+                    this.logger.error(`❌ 读取编译输出失败: ${error}`);
                 }
+            } else {
+                this.logger.warn(`⚠️ 未找到CSCodeReader工具或编译输出文件`);
             }
             
             // 4. 尝试读取警告信息 - 优化建议的重要来源
-            if (this.tools.has('warningsReader')) {
+            const warningsFileCheck = securityChecks.find(check => check.fileName === '__Warnings__.xml');
+            if (this.tools.has('extractRuntime') && warningsFileCheck?.securityResult.safe) {
                 try {
-                    const warningsTool = this.tools.get('warningsReader')!;
-                    const warningsResult = await warningsTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'WARNINGS',
-                        analysisGoal: 'warnings_analysis'
-                    });
+                    this.logger.info('⚠️ 开始读取警告信息...');
+                    const warningsTool = this.tools.get('extractRuntime')!;
+                    
+                    const warningsResult = await Promise.race([
+                        warningsTool.execute({
+                            filePath: warningsFileCheck.filePath,
+                            fileType: 'WARNINGS',
+                            analysisGoal: 'warnings_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('警告信息读取超时')), 10000))
+                    ]) as ToolOutput;
                     
                     if (warningsResult.success && warningsResult.data) {
                         warnings = warningsResult.data;
                         availableFiles.push('__Warnings__.xml');
                         this.logger.info('✅ 成功收集警告信息');
+                    } else {
+                        this.logger.warn(`⚠️ 警告信息读取失败: ${warningsResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取警告信息失败: ${error}`);
+                    this.logger.error(`❌ 读取警告信息失败: ${error}`);
                 }
+            } else {
+                this.logger.warn(`⚠️ 未找到extractRuntime工具或警告文件`);
             }
             
             // 5. 尝试读取错误日志（保持原有逻辑）
-            if (this.tools.has('errorLogReader')) {
+            const errorFileCheck = securityChecks.find(check => check.fileName === 'Error');
+            if (this.tools.has('ErrorLogReader') && errorFileCheck?.securityResult.safe) {
                 try {
-                    const errorTool = this.tools.get('errorLogReader')!;
-                    const errorResult = await errorTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'ERROR_INFO',
-                        analysisGoal: 'error_analysis'
-                    });
+                    this.logger.info('🚨 开始读取错误日志...');
+                    const errorTool = this.tools.get('ErrorLogReader')!;
+                    
+                    const errorResult = await Promise.race([
+                        errorTool.execute({
+                            filePath: errorFileCheck.filePath,
+                            fileType: 'ERROR_INFO',
+                            analysisGoal: 'error_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('错误日志读取超时')), 10000))
+                    ]) as ToolOutput;
                     
                     if (errorResult.success && errorResult.data) {
                         errorLogs = errorResult.data;
                         availableFiles.push('Error');
                         this.logger.info('✅ 成功收集错误日志');
+                    } else {
+                        this.logger.warn(`⚠️ 错误日志读取失败: ${errorResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取错误日志失败: ${error}`);
+                    this.logger.error(`❌ 读取错误日志失败: ${error}`);
                 }
+            } else {
+                this.logger.warn(`⚠️ 未找到ErrorLogReader工具或错误日志文件`);
             }
             
             // 6. 尝试读取顶点信息（保持原有逻辑）
-            if (this.tools.has('extractVertex')) {
+            const vertexFileCheck = securityChecks.find(check => check.fileName === 'ScopeVertexDef.xml');
+            if (this.tools.has('extractVertex') && vertexFileCheck?.securityResult.safe) {
                 try {
+                    this.logger.info('🔗 开始读取顶点信息...');
                     const vertexTool = this.tools.get('extractVertex')!;
-                    const vertexResult = await vertexTool.execute({
-                        filePath: jobFolder,
-                        fileType: 'VERTEX_DEFINITION',
-                        analysisGoal: 'vertex_analysis'
-                    });
+                    
+                    const vertexResult = await Promise.race([
+                        vertexTool.execute({
+                            filePath: vertexFileCheck.filePath,
+                            fileType: 'VERTEX_DEFINITION',
+                            analysisGoal: 'vertex_analysis'
+                        }),
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('顶点信息读取超时')), 20000))
+                    ]) as ToolOutput;
                     
                     if (vertexResult.success && vertexResult.data) {
                         vertexInfo = vertexResult.data;
                         availableFiles.push('ScopeVertexDef.xml');
                         this.logger.info('✅ 成功收集顶点信息');
+                    } else {
+                        this.logger.warn(`⚠️ 顶点信息读取失败: ${vertexResult.errors?.join(', ') || '未知错误'}`);
                     }
                 } catch (error) {
-                    this.logger.warn(`⚠️ 读取顶点信息失败: ${error}`);
+                    this.logger.error(`❌ 读取顶点信息失败: ${error}`);
                 }
+            } else {
+                this.logger.warn(`⚠️ 未找到extractVertex工具或顶点信息文件`);
             }
             
             const collectionTime = Date.now() - startTime;
@@ -1589,20 +1649,49 @@ export class ScopeOptimizationAgent implements AgentCore {
             };
             
         } catch (error) {
-            this.logger.error(`证据收集失败: ${error}`);
+            this.logger.error(`证据收集过程中发生严重错误: ${error}`);
+            
+            // 即使发生错误，也要尝试返回已收集的数据
+            const collectionTime = Date.now() - startTime;
+            const hasData = availableFiles.length > 0;
+            
+            // 提取关键性能指标（基于已收集的数据）
+            const keyMetrics = this.extractKeyMetrics(runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
+            
+            // 生成安全状态信息
+            const securityStatus = {
+                totalFiles: securityResults.length,
+                safeFiles: securityResults.filter(r => r.safe).length,
+                blockedFiles: securityResults.filter(r => !r.safe).length,
+                securityIssues: securityResults.flatMap(r => r.issues).concat([`收集过程异常: ${error}`]),
+                totalCheckTime: securityResults.reduce((sum, r) => sum + r.checkTime, 0),
+                maxFileSize: Math.max(...securityResults.map(r => r.fileSize), 0),
+                avgCheckTime: securityResults.length > 0 ? 
+                    securityResults.reduce((sum, r) => sum + r.checkTime, 0) / securityResults.length : 0
+            };
+            
+            this.logger.warn(`⚠️ 证据收集遇到错误但继续执行，耗时${collectionTime}ms，收集到${availableFiles.length}个文件`);
+            this.logger.info('📋 已收集数据状态:');
+            this.logger.info(`  - 运行时统计: ${runtimeStats ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 错误日志: ${errorLogs ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 顶点信息: ${vertexInfo ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 作业信息: ${jobInfo ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 编译输出: ${compileOutput ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 警告信息: ${warnings ? '✅ 已收集' : '❌ 未收集'}`);
+            
             return {
-                hasData: false,
-                collectionTime: Date.now() - startTime,
-                availableFiles: [],
-                securityStatus: {
-                    totalFiles: securityResults.length,
-                    safeFiles: 0,
-                    blockedFiles: securityResults.length,
-                    securityIssues: [`收集过程异常: ${error}`],
-                    totalCheckTime: securityResults.reduce((sum, r) => sum + r.checkTime, 0),
-                    maxFileSize: 0,
-                    avgCheckTime: 0
-                }
+                runtimeStats,
+                errorLogs,
+                vertexInfo,
+                jobInfo,
+                compileOutput,
+                warnings,
+                hasData,
+                collectionTime,
+                availableFiles,
+                keyMetrics,
+                folderType: 'unknown',
+                securityStatus
             };
         }
     }

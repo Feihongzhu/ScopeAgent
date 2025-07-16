@@ -2,6 +2,7 @@ import { BaseTool } from './BaseTool';
 import { ToolInput, ToolOutput } from '../../../framework/types/ToolTypes';
 import { analyzeScopeRuntimeStatistics } from '../../../functions/extractRuntime2';
 import { Logger } from '../../../functions/logger';
+import * as fs from 'fs';
 
 /**
  * Runtime2提取工具
@@ -19,8 +20,9 @@ export class ExtractRuntime2Tool extends BaseTool {
         try {
             this.validateInput(input);
             
-            // 调用现有的extractRuntime2函数
-            const runtime2Data = await analyzeScopeRuntimeStatistics(input.filePath);
+            // 修复：先读取文件内容，再传递给analyzeScopeRuntimeStatistics函数
+            const xmlContent = await fs.promises.readFile(input.filePath, 'utf-8');
+            const runtime2Data = analyzeScopeRuntimeStatistics(xmlContent);
             
             // 将runtime2Data存储到intermediateResults中，供ExtractOperatorTool使用
             if (input.context?.intermediateResults) {
