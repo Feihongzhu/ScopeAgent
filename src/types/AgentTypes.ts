@@ -90,9 +90,110 @@ export interface EvidenceData {
     runtimeStats?: any;               // 运行时统计数据
     errorLogs?: any;                  // 错误日志
     vertexInfo?: any;                 // 顶点信息
+    jobInfo?: any;                    // 作业信息 (新增)
+    compileOutput?: any;              // 编译输出 (新增)
+    warnings?: any;                   // 警告信息 (新增)
     hasData: boolean;                 // 是否成功收集到数据
     collectionTime: number;           // 收集耗时(毫秒)
     availableFiles: string[];         // 可用的分析文件
+    folderType?: 'minimal' | 'complete' | 'unknown';  // SCOPE环境类型
+    // 新增：关键性能指标摘要
+    keyMetrics?: {
+        // === 基础性能指标 ===
+        runTime?: number;             // 作业运行时间
+        compilationTime?: number;     // 编译时间
+        memoryPeakSize?: number;      // 内存峰值
+        cpuTime?: number;             // CPU时间
+        ioTime?: number;              // I/O时间
+        exceptionCount?: number;      // 异常数量
+        warningCount?: number;        // 警告数量
+        vertexCount?: number;         // 顶点数量
+        
+        // === 数据倾斜专项指标 ===
+        dataSkewMetrics?: {
+            skewRatio?: number;           // 数据倾斜比例
+            maxTaskDuration?: number;     // 最长任务执行时间
+            minTaskDuration?: number;     // 最短任务执行时间
+            avgTaskDuration?: number;     // 平均任务执行时间
+            skewedTasksCount?: number;    // 倾斜任务数量
+            hotKeys?: string[];           // 热点键列表
+            partitionImbalance?: number;  // 分区不平衡度
+            joinWithoutPartition?: number; // 无分区策略的JOIN数量
+        };
+        
+        // === Shuffle性能专项指标 ===
+        shuffleMetrics?: {
+            totalShuffleSize?: number;    // 总Shuffle数据量(MB)
+            shuffleOperationCount?: number; // Shuffle操作次数
+            maxShuffleSize?: number;      // 单次最大Shuffle大小
+            networkTransferTime?: number; // 网络传输时间
+            stageCount?: number;          // Stage数量
+            crossStageDataFlow?: number;  // 跨Stage数据流量
+            broadcastJoinCount?: number;  // 广播JOIN数量
+            sortMergeJoinCount?: number;  // 排序合并JOIN数量
+        };
+        
+        // === JOIN操作专项指标 ===
+        joinMetrics?: {
+            totalJoinCount?: number;      // 总JOIN数量
+            innerJoinCount?: number;      // Inner JOIN数量
+            leftJoinCount?: number;       // Left JOIN数量
+            crossJoinCount?: number;      // Cross JOIN数量(危险)
+            joinKeysAnalysis?: string[];  // JOIN键分析
+            joinEstimatedRowCount?: number; // JOIN预估行数
+            joinOptimizationHints?: string[]; // JOIN优化提示
+        };
+        
+        // === 编译和计划指标 ===
+        compilationMetrics?: {
+            csharpCompileTime?: number;   // C#编译时间
+            cppCompileTime?: number;      // C++编译时间
+            algebraOptimizationTime?: number; // 代数优化时间
+            planGenerationTime?: number;  // 执行计划生成时间
+            compilerWarnings?: string[];  // 编译器警告
+            optimizationLevel?: string;   // 优化级别
+        };
+        
+        // === 资源使用专项指标 ===
+        resourceMetrics?: {
+            maxConcurrentTasks?: number;  // 最大并发任务数
+            memoryUtilization?: number;   // 内存利用率
+            cpuUtilization?: number;      // CPU利用率
+            diskIOBytes?: number;         // 磁盘IO字节数
+            networkIOBytes?: number;      // 网络IO字节数
+            gcPauseTime?: number;         // GC暂停时间
+            spillToDiskSize?: number;     // 溢出到磁盘大小
+        };
+        
+        // === 错误和警告详情 ===
+        issueMetrics?: {
+            criticalErrors?: string[];    // 严重错误列表
+            performanceWarnings?: string[]; // 性能警告列表
+            dataQualityIssues?: string[]; // 数据质量问题
+            optimizationSuggestions?: string[]; // 优化建议
+            riskFactors?: string[];       // 风险因素
+        };
+        
+        // === 数据源和输出指标 ===
+        dataMetrics?: {
+            inputDataSize?: number;       // 输入数据大小(MB)
+            outputDataSize?: number;      // 输出数据大小(MB)
+            dataCompressionRatio?: number; // 数据压缩比
+            inputTableCount?: number;     // 输入表数量
+            outputTableCount?: number;    // 输出表数量
+            rowProcessingRate?: number;   // 行处理速率(行/秒)
+        };
+    };
+    // 新增：安全状态信息
+    securityStatus?: {
+        totalFiles: number;           // 总文件数
+        safeFiles: number;            // 安全文件数
+        blockedFiles: number;         // 被阻止文件数
+        securityIssues: string[];     // 安全问题列表
+        totalCheckTime: number;       // 总检查时间
+        maxFileSize: number;          // 最大文件大小
+        avgCheckTime: number;         // 平均检查时间
+    };
 }
 
 export interface AgentPlan {

@@ -3,6 +3,7 @@ import * as os from 'os';
 import { Logger } from '../functions/logger';
 import { v4 as uuidv4 } from 'uuid';
 import { LanguageModelService } from '../services/LanguageModelService';
+import { SecurityManager, SecurityCheckResult } from './SecurityManager';
 import {
     AgentCore,
     AgentContext,
@@ -57,6 +58,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     private logger: Logger;
     private currentStatus: AgentStatus;
     private baselineLearning: Map<string, any> = new Map();
+    private securityManager: SecurityManager;
 
     // 性能统计
     private performanceStats = {
@@ -70,6 +72,13 @@ export class ScopeOptimizationAgent implements AgentCore {
     constructor(logger: Logger) {
         this.logger = logger;
         this.languageModel = new LanguageModelService(logger);
+        this.securityManager = new SecurityManager(logger, {
+            maxFileSize: 10 * 1024 * 1024,  // 10MB限制（适合SCOPE文件）
+            allowedExtensions: ['.xml', '.txt', '.log', '.json', '.csv'],
+            maxProcessingTime: 15000,        // 15秒超时
+            enableVirusCheck: true,          // 启用病毒检查
+            maxConcurrentChecks: 3           // 最多3个并发检查
+        });
         this.currentStatus = {
             state: 'idle',
             lastActivity: new Date()
@@ -729,7 +738,9 @@ export class ScopeOptimizationAgent implements AgentCore {
             evidenceData: {  // 阶段1新增：备用模式下的空证据数据
                 hasData: false,
                 collectionTime: 0,
-                availableFiles: []
+                availableFiles: [],
+                keyMetrics: {},
+                folderType: 'unknown'
             },
             timestamp: new Date()
         };
@@ -1340,25 +1351,68 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     /**
-     * 收集运行证据 - 阶段1新增
-     * 在思考前先读取关键运行结果文件
+     * 收集运行证据 - 阶段1新增（安全增强版）
+     * 在思考前先读取关键运行结果文件，包含完整的安全检查
      */
     private async collectEvidence(context: AgentContext): Promise<EvidenceData> {
         const startTime = Date.now();
         const availableFiles: string[] = [];
+        const securityResults: SecurityCheckResult[] = [];
         let runtimeStats: any = null;
         let errorLogs: any = null;
         let vertexInfo: any = null;
+        let jobInfo: any = null;
+        let compileOutput: any = null;
+        let warnings: any = null;
         
         try {
-            this.logger.info('🔍 开始收集运行证据...');
+            this.logger.info('🔍 开始收集运行证据（安全增强版）...');
             
-            // 尝试读取运行时统计数据
-            if (this.tools.has('extractRuntime2')) {
+            const jobFolder = context.workspaceState.currentJobFolder || '';
+            
+            // 检测当前文件夹的类型（精简版还是完整版）
+            const folderType = await this.detectFolderType(jobFolder);
+            
+            // 预定义需要检查的文件列表
+            const targetFiles = [
+                '__ScopeRuntimeStatistics__.xml',
+                'JobInfo.xml',
+                '__ScopeCodeGenCompileOutput__.txt',
+                '__Warnings__.xml',
+                'Error',
+                'ScopeVertexDef.xml'
+            ];
+            
+            // 安全检查所有目标文件
+            const securityCheckPromises = targetFiles.map(async (fileName) => {
+                const filePath = require('path').join(jobFolder, fileName);
+                const securityResult = await this.securityManager.checkFileSecurity(filePath);
+                securityResults.push(securityResult);
+                return { fileName, filePath, securityResult };
+            });
+            
+            const securityChecks = await Promise.all(securityCheckPromises);
+            
+            // 统计安全检查结果
+            const safeFiles = securityChecks.filter(check => check.securityResult.safe);
+            const blockedFiles = securityChecks.filter(check => !check.securityResult.safe);
+            
+            this.logger.info(`🛡️ 安全检查完成: ${safeFiles.length}个安全文件，${blockedFiles.length}个被阻止文件`);
+            
+            // 记录被阻止的文件
+            if (blockedFiles.length > 0) {
+                blockedFiles.forEach(blocked => {
+                    this.logger.warn(`🚫 文件被阻止: ${blocked.fileName} - ${blocked.securityResult.issues.join(', ')}`);
+                });
+            }
+            
+            // 1. 尝试读取运行时统计数据 - 核心性能文件（仅安全文件）
+            const runtimeFileCheck = securityChecks.find(check => check.fileName === '__ScopeRuntimeStatistics__.xml');
+            if (this.tools.has('extractRuntime2') && runtimeFileCheck?.securityResult.safe) {
                 try {
                     const runtimeTool = this.tools.get('extractRuntime2')!;
                     const runtimeResult = await runtimeTool.execute({
-                        filePath: context.workspaceState.currentJobFolder || '',
+                        filePath: jobFolder,
                         fileType: 'RUNTIME_STATS',
                         analysisGoal: 'runtime_analysis'
                     });
@@ -1366,19 +1420,81 @@ export class ScopeOptimizationAgent implements AgentCore {
                     if (runtimeResult.success && runtimeResult.data) {
                         runtimeStats = runtimeResult.data;
                         availableFiles.push('__ScopeRuntimeStatistics__.xml');
-                        this.logger.info('✅ 成功收集运行时统计数据');
+                        this.logger.info(`✅ 成功收集运行时统计数据 (${this.securityManager.getConfig().maxFileSize}字节限制)`);
                     }
                 } catch (error) {
                     this.logger.warn(`⚠️ 读取运行时统计失败: ${error}`);
                 }
+            } else if (runtimeFileCheck && !runtimeFileCheck.securityResult.safe) {
+                this.logger.warn(`🚫 运行时统计文件被安全检查阻止: ${runtimeFileCheck.securityResult.issues.join(', ')}`);
             }
             
-            // 尝试读取错误日志
+            // 2. 尝试读取作业信息 - 作业状态和时间信息
+            if (this.tools.has('jobInfoReader')) {
+                try {
+                    const jobInfoTool = this.tools.get('jobInfoReader')!;
+                    const jobInfoResult = await jobInfoTool.execute({
+                        filePath: jobFolder,
+                        fileType: 'JOB_INFO',
+                        analysisGoal: 'job_analysis'
+                    });
+                    
+                    if (jobInfoResult.success && jobInfoResult.data) {
+                        jobInfo = jobInfoResult.data;
+                        availableFiles.push('JobInfo.xml');
+                        this.logger.info('✅ 成功收集作业信息');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取作业信息失败: ${error}`);
+                }
+            }
+            
+            // 3. 尝试读取编译输出 - 编译性能和警告
+            if (this.tools.has('compileOutputReader')) {
+                try {
+                    const compileOutputTool = this.tools.get('compileOutputReader')!;
+                    const compileResult = await compileOutputTool.execute({
+                        filePath: jobFolder,
+                        fileType: 'COMPILE_OUTPUT',
+                        analysisGoal: 'compile_analysis'
+                    });
+                    
+                    if (compileResult.success && compileResult.data) {
+                        compileOutput = compileResult.data;
+                        availableFiles.push('__ScopeCodeGenCompileOutput__.txt');
+                        this.logger.info('✅ 成功收集编译输出');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取编译输出失败: ${error}`);
+                }
+            }
+            
+            // 4. 尝试读取警告信息 - 优化建议的重要来源
+            if (this.tools.has('warningsReader')) {
+                try {
+                    const warningsTool = this.tools.get('warningsReader')!;
+                    const warningsResult = await warningsTool.execute({
+                        filePath: jobFolder,
+                        fileType: 'WARNINGS',
+                        analysisGoal: 'warnings_analysis'
+                    });
+                    
+                    if (warningsResult.success && warningsResult.data) {
+                        warnings = warningsResult.data;
+                        availableFiles.push('__Warnings__.xml');
+                        this.logger.info('✅ 成功收集警告信息');
+                    }
+                } catch (error) {
+                    this.logger.warn(`⚠️ 读取警告信息失败: ${error}`);
+                }
+            }
+            
+            // 5. 尝试读取错误日志（保持原有逻辑）
             if (this.tools.has('errorLogReader')) {
                 try {
                     const errorTool = this.tools.get('errorLogReader')!;
                     const errorResult = await errorTool.execute({
-                        filePath: context.workspaceState.currentJobFolder || '',
+                        filePath: jobFolder,
                         fileType: 'ERROR_INFO',
                         analysisGoal: 'error_analysis'
                     });
@@ -1393,12 +1509,12 @@ export class ScopeOptimizationAgent implements AgentCore {
                 }
             }
             
-            // 尝试读取顶点信息
+            // 6. 尝试读取顶点信息（保持原有逻辑）
             if (this.tools.has('extractVertex')) {
                 try {
                     const vertexTool = this.tools.get('extractVertex')!;
                     const vertexResult = await vertexTool.execute({
-                        filePath: context.workspaceState.currentJobFolder || '',
+                        filePath: jobFolder,
                         fileType: 'VERTEX_DEFINITION',
                         analysisGoal: 'vertex_analysis'
                     });
@@ -1416,80 +1532,878 @@ export class ScopeOptimizationAgent implements AgentCore {
             const collectionTime = Date.now() - startTime;
             const hasData = availableFiles.length > 0;
             
-            this.logger.info(`🔍 证据收集完成，耗时${collectionTime}ms，收集到${availableFiles.length}个文件`);
+            // 提取关键性能指标
+            const keyMetrics = this.extractKeyMetrics(runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
+            
+            // 生成安全状态信息
+            const securityStatus = {
+                totalFiles: securityResults.length,
+                safeFiles: securityResults.filter(r => r.safe).length,
+                blockedFiles: securityResults.filter(r => !r.safe).length,
+                securityIssues: securityResults.flatMap(r => r.issues),
+                totalCheckTime: securityResults.reduce((sum, r) => sum + r.checkTime, 0),
+                maxFileSize: Math.max(...securityResults.map(r => r.fileSize), 0),
+                avgCheckTime: securityResults.length > 0 ? 
+                    securityResults.reduce((sum, r) => sum + r.checkTime, 0) / securityResults.length : 0
+            };
+            
+            this.logger.info(`🔍 证据收集完成，耗时${collectionTime}ms，收集到${availableFiles.length}个文件（${folderType}版本环境）`);
+            this.logger.info(`🛡️ 安全检查: ${securityStatus.safeFiles}/${securityStatus.totalFiles}个文件通过，平均检查时间${securityStatus.avgCheckTime.toFixed(1)}ms`);
             
             return {
                 runtimeStats,
                 errorLogs,
                 vertexInfo,
+                jobInfo,
+                compileOutput,
+                warnings,
                 hasData,
                 collectionTime,
-                availableFiles
+                availableFiles,
+                keyMetrics,
+                folderType,
+                securityStatus
             };
             
         } catch (error) {
             this.logger.error(`证据收集失败: ${error}`);
-                         return {
-                 hasData: false,
-                 collectionTime: Date.now() - startTime,
-                 availableFiles: []
-             };
-         }
-     }
+            return {
+                hasData: false,
+                collectionTime: Date.now() - startTime,
+                availableFiles: [],
+                securityStatus: {
+                    totalFiles: securityResults.length,
+                    safeFiles: 0,
+                    blockedFiles: securityResults.length,
+                    securityIssues: [`收集过程异常: ${error}`],
+                    totalCheckTime: securityResults.reduce((sum, r) => sum + r.checkTime, 0),
+                    maxFileSize: 0,
+                    avgCheckTime: 0
+                }
+            };
+        }
+    }
 
-     /**
-      * 用证据数据增强上下文 - 阶段1新增
+         /**
+      * 检测文件夹类型 - 判断是精简版还是完整版SCOPE执行环境
       */
-     private enhanceContextWithEvidence(context: AgentContext, evidenceData: EvidenceData): AgentContext {
-         const enhancedContext = { ...context };
-         
-         // 如果有证据数据，将其添加到对话历史中供LLM参考
-         if (evidenceData.hasData) {
-             const evidenceSummary = this.generateEvidenceSummary(evidenceData);
+     private async detectFolderType(jobFolder: string): Promise<'minimal' | 'complete' | 'unknown'> {
+         try {
+             // 检查关键文件是否存在来判断文件夹类型
+             const fs = require('fs').promises;
+             const path = require('path');
              
-             // 添加证据摘要到对话历史
-             enhancedContext.conversationHistory = [
-                 ...context.conversationHistory,
-                 {
-                     role: 'system',
-                     content: `运行证据摘要: ${evidenceSummary}`,
-                     timestamp: new Date()
-                 }
+             // 精简版特征文件
+             const minimalFiles = [
+                 '__ScopeRuntimeStatistics__.xml',
+                 'ScopeVertexDef.xml'
              ];
              
-             // 更新工作空间状态
-             enhancedContext.workspaceState = {
-                 ...context.workspaceState,
-                 scopeFilesAvailable: evidenceData.availableFiles.length > 0
-             };
+             // 完整版特征文件
+             const completeFiles = [
+                 'JobInfo.xml',
+                 '__ScopeCodeGenCompileOutput__.txt',
+                 '__Warnings__.xml',
+                 'scopeengine.dll',
+                 'scopehost.exe'
+             ];
+             
+             let minimalCount = 0;
+             let completeCount = 0;
+             
+             // 检查精简版文件
+             for (const file of minimalFiles) {
+                 try {
+                     await fs.access(path.join(jobFolder, file));
+                     minimalCount++;
+                 } catch (error) {
+                     // 文件不存在，继续检查下一个
+                 }
+             }
+             
+             // 检查完整版文件
+             for (const file of completeFiles) {
+                 try {
+                     await fs.access(path.join(jobFolder, file));
+                     completeCount++;
+                 } catch (error) {
+                     // 文件不存在，继续检查下一个
+                 }
+             }
+             
+             // 根据文件存在情况判断类型
+             if (completeCount >= 3) {
+                 this.logger.info(`🔍 检测到完整版SCOPE执行环境，包含${completeCount}个完整版特征文件`);
+                 return 'complete';
+             } else if (minimalCount >= 1) {
+                 this.logger.info(`🔍 检测到精简版SCOPE执行环境，包含${minimalCount}个核心文件`);
+                 return 'minimal';
+             } else {
+                 this.logger.warn(`🔍 无法确定SCOPE环境类型，未找到足够的特征文件`);
+                 return 'unknown';
+             }
+             
+         } catch (error) {
+             this.logger.warn(`检测文件夹类型失败: ${error}`);
+             return 'unknown';
          }
-         
-         return enhancedContext;
      }
 
-     /**
-      * 生成证据摘要 - 阶段1新增
-      */
-     private generateEvidenceSummary(evidenceData: EvidenceData): string {
-         const summaryParts: string[] = [];
-         
-         if (evidenceData.runtimeStats) {
-             summaryParts.push(`运行时统计: 发现${evidenceData.runtimeStats.vertexCount || 0}个顶点`);
-             if (evidenceData.runtimeStats.timeStats) {
-                 summaryParts.push(`总执行时间: ${evidenceData.runtimeStats.timeStats.executeElapsedTime || 0}ms`);
-             }
-         }
-         
-         if (evidenceData.errorLogs) {
-             summaryParts.push(`错误日志: ${evidenceData.errorLogs.hasErrors ? '发现错误' : '无错误'}`);
-         }
-         
-         if (evidenceData.vertexInfo) {
-             summaryParts.push(`顶点信息: 包含${evidenceData.vertexInfo.vertexCount || 0}个计算节点`);
-         }
-         
-         summaryParts.push(`收集到${evidenceData.availableFiles.length}个分析文件`);
-         
-         return summaryParts.join('; ');
-     }
+    /**
+     * 提取关键性能指标 - 全面增强版，提供高信息密度分析
+     */
+    private extractKeyMetrics(runtimeStats: any, jobInfo: any, compileOutput: any, warnings: any, vertexInfo: any): any {
+        const metrics: any = {};
+        
+        try {
+            // === 基础性能指标提取 ===
+            this.extractBasicMetrics(metrics, runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
+            
+            // === 数据倾斜专项指标提取 ===
+            metrics.dataSkewMetrics = this.extractDataSkewMetrics(runtimeStats, jobInfo, vertexInfo);
+            
+            // === Shuffle性能专项指标提取 ===
+            metrics.shuffleMetrics = this.extractShuffleMetrics(runtimeStats, vertexInfo);
+            
+            // === JOIN操作专项指标提取 ===
+            metrics.joinMetrics = this.extractJoinMetrics(jobInfo, vertexInfo);
+            
+            // === 编译和计划指标提取 ===
+            metrics.compilationMetrics = this.extractCompilationMetrics(compileOutput, jobInfo);
+            
+            // === 资源使用专项指标提取 ===
+            metrics.resourceMetrics = this.extractResourceMetrics(runtimeStats, jobInfo);
+            
+            // === 错误和警告详情提取 ===
+            metrics.issueMetrics = this.extractIssueMetrics(warnings, compileOutput, runtimeStats);
+            
+            // === 数据源和输出指标提取 ===
+            metrics.dataMetrics = this.extractDataMetrics(jobInfo, runtimeStats);
+            
+        } catch (error) {
+            this.logger.warn(`提取关键指标失败: ${error}`);
+        }
+        
+        return metrics;
+    }
+
+    /**
+     * 提取基础性能指标
+     */
+    private extractBasicMetrics(metrics: any, runtimeStats: any, jobInfo: any, compileOutput: any, warnings: any, vertexInfo: any): void {
+        // 从作业信息中提取运行时间
+        if (jobInfo?.RunTime) {
+            metrics.runTime = parseInt(jobInfo.RunTime) || 0;
+        }
+        if (jobInfo?.CompilationTimeTicks) {
+            metrics.compilationTime = parseInt(jobInfo.CompilationTimeTicks) || 0;
+        }
+        
+        // 从运行时统计中提取内存和CPU信息
+        if (runtimeStats?.timeStats) {
+            metrics.cpuTime = runtimeStats.timeStats.executeTotalCpuTime || 0;
+            metrics.ioTime = runtimeStats.timeStats.ioTime || 0;
+        }
+        if (runtimeStats?.memoryStats) {
+            metrics.memoryPeakSize = runtimeStats.memoryStats.maxExecutionMemoryPeakSize || 0;
+        }
+        
+        // 从编译输出中提取编译指标
+        if (compileOutput?.csharpCompileTime) {
+            metrics.compilationTime = (metrics.compilationTime || 0) + compileOutput.csharpCompileTime;
+        }
+        
+        // 从警告信息中提取警告数量
+        if (warnings?.warningCount) {
+            metrics.warningCount = warnings.warningCount;
+        }
+        
+        // 从顶点信息中提取顶点数量
+        if (vertexInfo?.vertexCount) {
+            metrics.vertexCount = vertexInfo.vertexCount;
+        }
+    }
+
+    /**
+     * 提取数据倾斜专项指标
+     */
+    private extractDataSkewMetrics(runtimeStats: any, jobInfo: any, vertexInfo: any): any {
+        const skewMetrics: any = {};
+        
+        try {
+            // 从运行时统计中提取任务执行时间信息
+            if (runtimeStats?.taskStats) {
+                const taskDurations = runtimeStats.taskStats.taskDurations || [];
+                if (taskDurations.length > 0) {
+                    skewMetrics.maxTaskDuration = Math.max(...taskDurations);
+                    skewMetrics.minTaskDuration = Math.min(...taskDurations);
+                    skewMetrics.avgTaskDuration = taskDurations.reduce((a: number, b: number) => a + b, 0) / taskDurations.length;
+                    
+                    // 计算倾斜比例
+                    if (skewMetrics.avgTaskDuration > 0) {
+                        skewMetrics.skewRatio = skewMetrics.maxTaskDuration / skewMetrics.avgTaskDuration;
+                    }
+                    
+                    // 计算倾斜任务数量（执行时间超过平均值2倍的任务）
+                    const threshold = skewMetrics.avgTaskDuration * 2;
+                    skewMetrics.skewedTasksCount = taskDurations.filter((duration: number) => duration > threshold).length;
+                }
+            }
+            
+            // 从顶点信息中提取分区信息
+            if (vertexInfo?.partitionStats) {
+                const partitionSizes = vertexInfo.partitionStats.partitionSizes || [];
+                if (partitionSizes.length > 0) {
+                    const maxPartition = Math.max(...partitionSizes);
+                    const minPartition = Math.min(...partitionSizes);
+                    const avgPartition = partitionSizes.reduce((a: number, b: number) => a + b, 0) / partitionSizes.length;
+                    
+                    if (avgPartition > 0) {
+                        skewMetrics.partitionImbalance = (maxPartition - minPartition) / avgPartition;
+                    }
+                }
+            }
+            
+            // 从作业信息中提取热点键信息
+            if (jobInfo?.hotKeys) {
+                skewMetrics.hotKeys = jobInfo.hotKeys.slice(0, 5); // 只保留前5个热点键
+            }
+            
+            // 统计无分区策略的JOIN数量
+            if (vertexInfo?.joins) {
+                skewMetrics.joinWithoutPartition = vertexInfo.joins.filter((join: any) => 
+                    !join.partitionBy || join.partitionBy.length === 0
+                ).length;
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取数据倾斜指标失败: ${error}`);
+        }
+        
+        return skewMetrics;
+    }
+
+    /**
+     * 提取Shuffle性能专项指标
+     */
+    private extractShuffleMetrics(runtimeStats: any, vertexInfo: any): any {
+        const shuffleMetrics: any = {};
+        
+        try {
+            // 从运行时统计中提取Shuffle信息
+            if (runtimeStats?.shuffleStats) {
+                shuffleMetrics.totalShuffleSize = runtimeStats.shuffleStats.totalShuffleSize || 0;
+                shuffleMetrics.shuffleOperationCount = runtimeStats.shuffleStats.shuffleOperationCount || 0;
+                shuffleMetrics.maxShuffleSize = runtimeStats.shuffleStats.maxShuffleSize || 0;
+                shuffleMetrics.networkTransferTime = runtimeStats.shuffleStats.networkTransferTime || 0;
+            }
+            
+            // 从顶点信息中提取Stage信息
+            if (vertexInfo?.stages) {
+                shuffleMetrics.stageCount = vertexInfo.stages.length;
+                
+                // 计算跨Stage数据流量
+                shuffleMetrics.crossStageDataFlow = vertexInfo.stages.reduce((total: number, stage: any) => {
+                    return total + (stage.outputDataSize || 0);
+                }, 0);
+                
+                // 统计不同类型的JOIN数量
+                shuffleMetrics.broadcastJoinCount = vertexInfo.stages.filter((stage: any) => 
+                    stage.joinType === 'broadcast'
+                ).length;
+                
+                shuffleMetrics.sortMergeJoinCount = vertexInfo.stages.filter((stage: any) => 
+                    stage.joinType === 'sortMerge'
+                ).length;
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取Shuffle指标失败: ${error}`);
+        }
+        
+        return shuffleMetrics;
+    }
+
+    /**
+     * 提取JOIN操作专项指标
+     */
+    private extractJoinMetrics(jobInfo: any, vertexInfo: any): any {
+        const joinMetrics: any = {};
+        
+        try {
+            // 从顶点信息中统计JOIN操作
+            if (vertexInfo?.joins) {
+                const joins = vertexInfo.joins;
+                joinMetrics.totalJoinCount = joins.length;
+                
+                // 按JOIN类型分类统计
+                joinMetrics.innerJoinCount = joins.filter((join: any) => join.type === 'inner').length;
+                joinMetrics.leftJoinCount = joins.filter((join: any) => join.type === 'left').length;
+                joinMetrics.crossJoinCount = joins.filter((join: any) => join.type === 'cross').length;
+                
+                // 提取JOIN键分析
+                joinMetrics.joinKeysAnalysis = joins.map((join: any) => 
+                    `${join.leftKey}-${join.rightKey}(${join.type})`
+                ).slice(0, 10); // 限制前10个
+                
+                // 计算JOIN预估行数
+                joinMetrics.joinEstimatedRowCount = joins.reduce((total: number, join: any) => {
+                    return total + (join.estimatedRows || 0);
+                }, 0);
+                
+                // 生成JOIN优化提示
+                joinMetrics.joinOptimizationHints = [];
+                joins.forEach((join: any) => {
+                    if (!join.partitionBy) {
+                        joinMetrics.joinOptimizationHints.push(`${join.leftKey}需要分区优化`);
+                    }
+                    if (join.type === 'cross') {
+                        joinMetrics.joinOptimizationHints.push(`避免笛卡尔积JOIN: ${join.leftKey}×${join.rightKey}`);
+                    }
+                });
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取JOIN指标失败: ${error}`);
+        }
+        
+        return joinMetrics;
+    }
+
+    /**
+     * 提取编译和计划指标
+     */
+    private extractCompilationMetrics(compileOutput: any, jobInfo: any): any {
+        const compilationMetrics: any = {};
+        
+        try {
+            // 从编译输出中提取编译时间
+            if (compileOutput) {
+                compilationMetrics.csharpCompileTime = compileOutput.csharpCompileTime || 0;
+                compilationMetrics.cppCompileTime = compileOutput.cppCompileTime || 0;
+                compilationMetrics.algebraOptimizationTime = compileOutput.algebraOptimizationTime || 0;
+                compilationMetrics.planGenerationTime = compileOutput.planGenerationTime || 0;
+                
+                // 提取编译器警告
+                if (compileOutput.warnings) {
+                    compilationMetrics.compilerWarnings = compileOutput.warnings.slice(0, 5);
+                }
+                
+                // 提取优化级别
+                compilationMetrics.optimizationLevel = compileOutput.optimizationLevel || 'unknown';
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取编译指标失败: ${error}`);
+        }
+        
+        return compilationMetrics;
+    }
+
+    /**
+     * 提取资源使用专项指标
+     */
+    private extractResourceMetrics(runtimeStats: any, jobInfo: any): any {
+        const resourceMetrics: any = {};
+        
+        try {
+            // 从运行时统计中提取资源使用信息
+            if (runtimeStats) {
+                resourceMetrics.maxConcurrentTasks = runtimeStats.maxConcurrentTasks || 0;
+                resourceMetrics.memoryUtilization = runtimeStats.memoryUtilization || 0;
+                resourceMetrics.cpuUtilization = runtimeStats.cpuUtilization || 0;
+                resourceMetrics.diskIOBytes = runtimeStats.diskIOBytes || 0;
+                resourceMetrics.networkIOBytes = runtimeStats.networkIOBytes || 0;
+                resourceMetrics.gcPauseTime = runtimeStats.gcPauseTime || 0;
+                resourceMetrics.spillToDiskSize = runtimeStats.spillToDiskSize || 0;
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取资源指标失败: ${error}`);
+        }
+        
+        return resourceMetrics;
+    }
+
+    /**
+     * 提取错误和警告详情
+     */
+    private extractIssueMetrics(warnings: any, compileOutput: any, runtimeStats: any): any {
+        const issueMetrics: any = {};
+        
+        try {
+            issueMetrics.criticalErrors = [];
+            issueMetrics.performanceWarnings = [];
+            issueMetrics.dataQualityIssues = [];
+            issueMetrics.optimizationSuggestions = [];
+            issueMetrics.riskFactors = [];
+            
+            // 从警告信息中提取
+            if (warnings?.items) {
+                warnings.items.forEach((warning: any) => {
+                    if (warning.severity === 'critical') {
+                        issueMetrics.criticalErrors.push(warning.message);
+                    } else if (warning.category === 'performance') {
+                        issueMetrics.performanceWarnings.push(warning.message);
+                    } else if (warning.category === 'dataQuality') {
+                        issueMetrics.dataQualityIssues.push(warning.message);
+                    }
+                });
+            }
+            
+            // 从编译输出中提取优化建议
+            if (compileOutput?.optimizationSuggestions) {
+                issueMetrics.optimizationSuggestions = compileOutput.optimizationSuggestions.slice(0, 5);
+            }
+            
+            // 从运行时统计中提取风险因素
+            if (runtimeStats?.riskFactors) {
+                issueMetrics.riskFactors = runtimeStats.riskFactors.slice(0, 5);
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取问题指标失败: ${error}`);
+        }
+        
+        return issueMetrics;
+    }
+
+    /**
+     * 提取数据源和输出指标
+     */
+    private extractDataMetrics(jobInfo: any, runtimeStats: any): any {
+        const dataMetrics: any = {};
+        
+        try {
+            // 从作业信息中提取数据指标
+            if (jobInfo) {
+                dataMetrics.inputDataSize = jobInfo.inputDataSize || 0;
+                dataMetrics.outputDataSize = jobInfo.outputDataSize || 0;
+                dataMetrics.inputTableCount = jobInfo.inputTableCount || 0;
+                dataMetrics.outputTableCount = jobInfo.outputTableCount || 0;
+                
+                // 计算压缩比
+                if (dataMetrics.inputDataSize > 0) {
+                    dataMetrics.dataCompressionRatio = dataMetrics.outputDataSize / dataMetrics.inputDataSize;
+                }
+            }
+            
+            // 从运行时统计中提取处理速率
+            if (runtimeStats?.processingStats) {
+                dataMetrics.rowProcessingRate = runtimeStats.processingStats.rowProcessingRate || 0;
+            }
+            
+        } catch (error) {
+            this.logger.warn(`提取数据指标失败: ${error}`);
+        }
+        
+        return dataMetrics;
+    }
+
+    /**
+     * 用证据数据增强上下文 - 阶段1新增
+     */
+    private enhanceContextWithEvidence(context: AgentContext, evidenceData: EvidenceData): AgentContext {
+        const enhancedContext = { ...context };
+        
+        // 如果有证据数据，将其添加到对话历史中供LLM参考
+        if (evidenceData.hasData) {
+            const evidenceSummary = this.generateEvidenceSummary(evidenceData);
+            
+            // 添加证据摘要到对话历史
+            enhancedContext.conversationHistory = [
+                ...context.conversationHistory,
+                {
+                    role: 'system',
+                    content: `运行证据摘要: ${evidenceSummary}`,
+                    timestamp: new Date()
+                }
+            ];
+            
+            // 更新工作空间状态
+            enhancedContext.workspaceState = {
+                ...context.workspaceState,
+                scopeFilesAvailable: evidenceData.availableFiles.length > 0
+            };
+        }
+        
+        return enhancedContext;
+    }
+
+    /**
+     * 生成高信息密度证据摘要 - 增强版(400-2000字符)，提供全面的性能洞察
+     */
+    private generateEvidenceSummary(evidenceData: EvidenceData): string {
+        const summaryParts: string[] = [];
+        
+        // === 核心作业指标 === 
+        summaryParts.push(this.generateBasicJobSummary(evidenceData));
+        
+        // === 数据倾斜专项分析 ===
+        const skewSummary = this.generateDataSkewSummary(evidenceData.keyMetrics?.dataSkewMetrics);
+        if (skewSummary) {
+            summaryParts.push(`\n📊 数据倾斜分析: ${skewSummary}`);
+        }
+        
+        // === Shuffle性能专项分析 ===
+        const shuffleSummary = this.generateShuffleSummary(evidenceData.keyMetrics?.shuffleMetrics);
+        if (shuffleSummary) {
+            summaryParts.push(`\n🔄 Shuffle性能: ${shuffleSummary}`);
+        }
+        
+        // === JOIN操作专项分析 ===
+        const joinSummary = this.generateJoinSummary(evidenceData.keyMetrics?.joinMetrics);
+        if (joinSummary) {
+            summaryParts.push(`\n🔗 JOIN分析: ${joinSummary}`);
+        }
+        
+        // === 资源使用深度分析 ===
+        const resourceSummary = this.generateResourceSummary(evidenceData.keyMetrics?.resourceMetrics);
+        if (resourceSummary) {
+            summaryParts.push(`\n💾 资源使用: ${resourceSummary}`);
+        }
+        
+        // === 编译和优化信息 ===
+        const compilationSummary = this.generateCompilationSummary(evidenceData.keyMetrics?.compilationMetrics);
+        if (compilationSummary) {
+            summaryParts.push(`\n⚙️ 编译分析: ${compilationSummary}`);
+        }
+        
+        // === 数据流和处理指标 ===
+        const dataSummary = this.generateDataFlowSummary(evidenceData.keyMetrics?.dataMetrics);
+        if (dataSummary) {
+            summaryParts.push(`\n📈 数据流量: ${dataSummary}`);
+        }
+        
+        // === 问题和风险评估 ===
+        const issueSummary = this.generateIssueSummary(evidenceData.keyMetrics?.issueMetrics);
+        if (issueSummary) {
+            summaryParts.push(`\n⚠️ 问题评估: ${issueSummary}`);
+        }
+        
+        // === 环境和文件收集状态 ===
+        const envType = evidenceData.folderType === 'complete' ? '完整版' : 
+                       evidenceData.folderType === 'minimal' ? '精简版' : '未知类型';
+        summaryParts.push(`\n📁 证据收集: 成功收集${evidenceData.availableFiles.length}个关键文件（${envType}环境），耗时${evidenceData.collectionTime}ms`);
+        
+        return summaryParts.join('');
+    }
+
+    /**
+     * 生成基础作业摘要
+     */
+    private generateBasicJobSummary(evidenceData: EvidenceData): string {
+        const parts: string[] = [];
+        const metrics = evidenceData.keyMetrics;
+        
+        if (!metrics) return '🔍 基础指标: 数据收集中';
+        
+        // 运行时间（转换为可读格式）
+        if (metrics.runTime) {
+            const minutes = Math.floor(metrics.runTime / 60000);
+            const seconds = Math.floor((metrics.runTime % 60000) / 1000);
+            parts.push(`运行时间 ${minutes}分${seconds}秒`);
+        }
+        
+        // 内存使用
+        if (metrics.memoryPeakSize) {
+            const memoryGB = (metrics.memoryPeakSize / 1024 / 1024 / 1024).toFixed(1);
+            parts.push(`内存峰值 ${memoryGB}GB`);
+        }
+        
+        // CPU使用
+        if (metrics.cpuTime) {
+            const cpuMinutes = Math.floor(metrics.cpuTime / 60000);
+            parts.push(`CPU总时间 ${cpuMinutes}分钟`);
+        }
+        
+        // 编译时间
+        if (metrics.compilationTime) {
+            const compileSeconds = Math.floor(metrics.compilationTime / 1000);
+            parts.push(`编译耗时 ${compileSeconds}秒`);
+        }
+        
+        // 顶点数量
+        if (metrics.vertexCount) {
+            parts.push(`计算顶点 ${metrics.vertexCount}个`);
+        }
+        
+        // 作业状态
+        if (evidenceData.jobInfo?.State) {
+            parts.push(`状态: ${evidenceData.jobInfo.State}`);
+        }
+        
+        return `🎯 核心指标: ${parts.join(', ')}`;
+    }
+
+    /**
+     * 生成数据倾斜专项摘要
+     */
+    private generateDataSkewSummary(skewMetrics: any): string | null {
+        if (!skewMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // 倾斜比例分析
+        if (skewMetrics.skewRatio) {
+            const severity = skewMetrics.skewRatio > 5 ? '严重' : skewMetrics.skewRatio > 3 ? '中等' : '轻微';
+            parts.push(`倾斜比例 ${skewMetrics.skewRatio.toFixed(1)}x(${severity})`);
+        }
+        
+        // 任务执行时间分析
+        if (skewMetrics.maxTaskDuration && skewMetrics.avgTaskDuration) {
+            const maxMin = Math.floor(skewMetrics.maxTaskDuration / 60000);
+            const avgMin = Math.floor(skewMetrics.avgTaskDuration / 60000);
+            parts.push(`最长任务 ${maxMin}分钟 vs 平均 ${avgMin}分钟`);
+        }
+        
+        // 倾斜任务数量
+        if (skewMetrics.skewedTasksCount) {
+            parts.push(`倾斜任务 ${skewMetrics.skewedTasksCount}个`);
+        }
+        
+        // 分区不平衡度
+        if (skewMetrics.partitionImbalance) {
+            parts.push(`分区不平衡度 ${skewMetrics.partitionImbalance.toFixed(2)}`);
+        }
+        
+        // 热点键
+        if (skewMetrics.hotKeys && skewMetrics.hotKeys.length > 0) {
+            parts.push(`热点键: ${skewMetrics.hotKeys.slice(0, 3).join(', ')}`);
+        }
+        
+        // 无分区JOIN
+        if (skewMetrics.joinWithoutPartition) {
+            parts.push(`无分区JOIN ${skewMetrics.joinWithoutPartition}个`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成Shuffle性能摘要
+     */
+    private generateShuffleSummary(shuffleMetrics: any): string | null {
+        if (!shuffleMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // Shuffle数据量
+        if (shuffleMetrics.totalShuffleSize) {
+            const shuffleGB = (shuffleMetrics.totalShuffleSize / 1024).toFixed(1);
+            parts.push(`总数据量 ${shuffleGB}GB`);
+        }
+        
+        // Shuffle操作次数
+        if (shuffleMetrics.shuffleOperationCount) {
+            parts.push(`操作次数 ${shuffleMetrics.shuffleOperationCount}`);
+        }
+        
+        // Stage数量
+        if (shuffleMetrics.stageCount) {
+            parts.push(`Stage数量 ${shuffleMetrics.stageCount}`);
+        }
+        
+        // 网络传输时间
+        if (shuffleMetrics.networkTransferTime) {
+            const transferMin = Math.floor(shuffleMetrics.networkTransferTime / 60000);
+            parts.push(`网络传输 ${transferMin}分钟`);
+        }
+        
+        // JOIN类型统计
+        const joinTypes: string[] = [];
+        if (shuffleMetrics.broadcastJoinCount) {
+            joinTypes.push(`广播JOIN ${shuffleMetrics.broadcastJoinCount}个`);
+        }
+        if (shuffleMetrics.sortMergeJoinCount) {
+            joinTypes.push(`排序JOIN ${shuffleMetrics.sortMergeJoinCount}个`);
+        }
+        if (joinTypes.length > 0) {
+            parts.push(joinTypes.join(', '));
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成JOIN操作摘要
+     */
+    private generateJoinSummary(joinMetrics: any): string | null {
+        if (!joinMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // JOIN总数
+        if (joinMetrics.totalJoinCount) {
+            parts.push(`总数 ${joinMetrics.totalJoinCount}个`);
+        }
+        
+        // JOIN类型分布
+        const joinTypes: string[] = [];
+        if (joinMetrics.innerJoinCount) joinTypes.push(`Inner ${joinMetrics.innerJoinCount}`);
+        if (joinMetrics.leftJoinCount) joinTypes.push(`Left ${joinMetrics.leftJoinCount}`);
+        if (joinMetrics.crossJoinCount) joinTypes.push(`Cross ${joinMetrics.crossJoinCount}(危险)`);
+        
+        if (joinTypes.length > 0) {
+            parts.push(`类型分布: ${joinTypes.join(', ')}`);
+        }
+        
+        // JOIN预估行数
+        if (joinMetrics.joinEstimatedRowCount) {
+            const rowsM = (joinMetrics.joinEstimatedRowCount / 1000000).toFixed(1);
+            parts.push(`预估行数 ${rowsM}M`);
+        }
+        
+        // 优化提示
+        if (joinMetrics.joinOptimizationHints && joinMetrics.joinOptimizationHints.length > 0) {
+            parts.push(`优化提示: ${joinMetrics.joinOptimizationHints.slice(0, 2).join('; ')}`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成资源使用摘要
+     */
+    private generateResourceSummary(resourceMetrics: any): string | null {
+        if (!resourceMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // 并发任务数
+        if (resourceMetrics.maxConcurrentTasks) {
+            parts.push(`最大并发 ${resourceMetrics.maxConcurrentTasks}任务`);
+        }
+        
+        // 资源利用率
+        if (resourceMetrics.memoryUtilization) {
+            parts.push(`内存利用率 ${resourceMetrics.memoryUtilization}%`);
+        }
+        if (resourceMetrics.cpuUtilization) {
+            parts.push(`CPU利用率 ${resourceMetrics.cpuUtilization}%`);
+        }
+        
+        // IO统计
+        if (resourceMetrics.diskIOBytes) {
+            const diskGB = (resourceMetrics.diskIOBytes / 1024 / 1024 / 1024).toFixed(1);
+            parts.push(`磁盘IO ${diskGB}GB`);
+        }
+        
+        // GC统计
+        if (resourceMetrics.gcPauseTime) {
+            parts.push(`GC暂停 ${resourceMetrics.gcPauseTime}ms`);
+        }
+        
+        // 溢出统计
+        if (resourceMetrics.spillToDiskSize) {
+            const spillGB = (resourceMetrics.spillToDiskSize / 1024 / 1024 / 1024).toFixed(1);
+            parts.push(`溢出磁盘 ${spillGB}GB`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成编译分析摘要
+     */
+    private generateCompilationSummary(compilationMetrics: any): string | null {
+        if (!compilationMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // 编译时间分解
+        if (compilationMetrics.csharpCompileTime) {
+            parts.push(`C#编译 ${Math.floor(compilationMetrics.csharpCompileTime / 1000)}秒`);
+        }
+        if (compilationMetrics.cppCompileTime) {
+            parts.push(`C++编译 ${Math.floor(compilationMetrics.cppCompileTime / 1000)}秒`);
+        }
+        
+        // 优化时间
+        if (compilationMetrics.algebraOptimizationTime) {
+            parts.push(`代数优化 ${Math.floor(compilationMetrics.algebraOptimizationTime / 1000)}秒`);
+        }
+        
+        // 优化级别
+        if (compilationMetrics.optimizationLevel) {
+            parts.push(`优化级别: ${compilationMetrics.optimizationLevel}`);
+        }
+        
+        // 编译器警告
+        if (compilationMetrics.compilerWarnings && compilationMetrics.compilerWarnings.length > 0) {
+            parts.push(`编译警告 ${compilationMetrics.compilerWarnings.length}个`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成数据流摘要
+     */
+    private generateDataFlowSummary(dataMetrics: any): string | null {
+        if (!dataMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // 输入输出数据量
+        if (dataMetrics.inputDataSize) {
+            const inputGB = (dataMetrics.inputDataSize / 1024).toFixed(1);
+            parts.push(`输入数据 ${inputGB}GB`);
+        }
+        if (dataMetrics.outputDataSize) {
+            const outputGB = (dataMetrics.outputDataSize / 1024).toFixed(1);
+            parts.push(`输出数据 ${outputGB}GB`);
+        }
+        
+        // 压缩比
+        if (dataMetrics.dataCompressionRatio) {
+            parts.push(`压缩比 ${(dataMetrics.dataCompressionRatio * 100).toFixed(1)}%`);
+        }
+        
+        // 表数量
+        if (dataMetrics.inputTableCount || dataMetrics.outputTableCount) {
+            parts.push(`表数量 ${dataMetrics.inputTableCount || 0}→${dataMetrics.outputTableCount || 0}`);
+        }
+        
+        // 处理速率
+        if (dataMetrics.rowProcessingRate) {
+            const rateK = (dataMetrics.rowProcessingRate / 1000).toFixed(1);
+            parts.push(`处理速率 ${rateK}K行/秒`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
+
+    /**
+     * 生成问题评估摘要
+     */
+    private generateIssueSummary(issueMetrics: any): string | null {
+        if (!issueMetrics) return null;
+        
+        const parts: string[] = [];
+        
+        // 严重错误
+        if (issueMetrics.criticalErrors && issueMetrics.criticalErrors.length > 0) {
+            parts.push(`严重错误 ${issueMetrics.criticalErrors.length}个`);
+        }
+        
+        // 性能警告
+        if (issueMetrics.performanceWarnings && issueMetrics.performanceWarnings.length > 0) {
+            parts.push(`性能警告 ${issueMetrics.performanceWarnings.length}个`);
+        }
+        
+        // 优化建议
+        if (issueMetrics.optimizationSuggestions && issueMetrics.optimizationSuggestions.length > 0) {
+            parts.push(`优化建议 ${issueMetrics.optimizationSuggestions.length}条`);
+            // 显示最重要的建议
+            parts.push(`主要建议: ${issueMetrics.optimizationSuggestions[0]}`);
+        }
+        
+        // 风险因素
+        if (issueMetrics.riskFactors && issueMetrics.riskFactors.length > 0) {
+            parts.push(`风险因素 ${issueMetrics.riskFactors.length}个`);
+        }
+        
+        return parts.length > 0 ? parts.join(', ') : null;
+    }
 }
