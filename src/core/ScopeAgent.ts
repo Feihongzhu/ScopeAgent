@@ -118,9 +118,11 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.logger.info(`🧠 Agent thinking about: "${input}"`);
             
             // 阶段1新增：先收集运行证据
+            this.logger.info('📊 思考阶段: 开始收集运行证据以增强意图分析...');
             const evidenceData = await this.collectEvidence(context);
             
             // 将证据融入上下文，增强意图分析
+            this.logger.info('🔗 思考阶段: 使用证据数据增强分析上下文...');
             const enhancedContext = this.enhanceContextWithEvidence(context, evidenceData);
             
             // 使用语言模型进行智能意图分析
@@ -1550,6 +1552,27 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.logger.info(`🔍 证据收集完成，耗时${collectionTime}ms，收集到${availableFiles.length}个文件（${folderType}版本环境）`);
             this.logger.info(`🛡️ 安全检查: ${securityStatus.safeFiles}/${securityStatus.totalFiles}个文件通过，平均检查时间${securityStatus.avgCheckTime.toFixed(1)}ms`);
             
+            // 详细日志输出 - 调试用
+            this.logger.info('📋 证据收集详细结果:');
+            this.logger.info(`  - 运行时统计: ${runtimeStats ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 错误日志: ${errorLogs ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 顶点信息: ${vertexInfo ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 作业信息: ${jobInfo ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 编译输出: ${compileOutput ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 警告信息: ${warnings ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.info(`  - 关键指标: ${keyMetrics ? Object.keys(keyMetrics).length : 0}个维度`);
+            
+            // 如果有关键指标，输出具体内容
+            if (keyMetrics) {
+                this.logger.info('🔍 关键指标详情:');
+                if (keyMetrics.runTime) this.logger.info(`  - 运行时间: ${keyMetrics.runTime}ms`);
+                if (keyMetrics.memoryPeakSize) this.logger.info(`  - 内存峰值: ${(keyMetrics.memoryPeakSize / 1024 / 1024).toFixed(1)}MB`);
+                if (keyMetrics.vertexCount) this.logger.info(`  - 顶点数量: ${keyMetrics.vertexCount}`);
+                if (keyMetrics.dataSkewMetrics?.skewRatio) this.logger.info(`  - 数据倾斜比例: ${keyMetrics.dataSkewMetrics.skewRatio.toFixed(1)}x`);
+                if (keyMetrics.joinMetrics?.totalJoinCount) this.logger.info(`  - JOIN操作数: ${keyMetrics.joinMetrics.totalJoinCount}`);
+                if (keyMetrics.shuffleMetrics?.totalShuffleSize) this.logger.info(`  - Shuffle数据量: ${(keyMetrics.shuffleMetrics.totalShuffleSize / 1024).toFixed(1)}GB`);
+            }
+            
             return {
                 runtimeStats,
                 errorLogs,
@@ -2010,6 +2033,12 @@ export class ScopeOptimizationAgent implements AgentCore {
         if (evidenceData.hasData) {
             const evidenceSummary = this.generateEvidenceSummary(evidenceData);
             
+            // 详细日志输出 - 调试用
+            this.logger.info('🔗 证据增强上下文:');
+            this.logger.info(`  - 证据摘要已生成，长度: ${evidenceSummary.length}字符`);
+            this.logger.info(`  - 添加到对话历史中，供LLM参考`);
+            this.logger.info(`  - 更新工作空间状态: scopeFilesAvailable = ${evidenceData.availableFiles.length > 0}`);
+            
             // 添加证据摘要到对话历史
             enhancedContext.conversationHistory = [
                 ...context.conversationHistory,
@@ -2025,6 +2054,8 @@ export class ScopeOptimizationAgent implements AgentCore {
                 ...context.workspaceState,
                 scopeFilesAvailable: evidenceData.availableFiles.length > 0
             };
+        } else {
+            this.logger.warn('⚠️ 证据增强上下文: 未收集到有效证据数据');
         }
         
         return enhancedContext;
@@ -2086,7 +2117,31 @@ export class ScopeOptimizationAgent implements AgentCore {
                        evidenceData.folderType === 'minimal' ? '精简版' : '未知类型';
         summaryParts.push(`\n📁 证据收集: 成功收集${evidenceData.availableFiles.length}个关键文件（${envType}环境），耗时${evidenceData.collectionTime}ms`);
         
-        return summaryParts.join('');
+        // 生成最终摘要
+        const finalSummary = summaryParts.join('');
+        
+        // 详细日志输出 - 调试用
+        this.logger.info('📝 证据摘要生成详情:');
+        this.logger.info(`  - 摘要总长度: ${finalSummary.length}字符`);
+        this.logger.info(`  - 摘要段落数: ${summaryParts.length}段`);
+        this.logger.info(`  - 环境类型: ${envType}`);
+        this.logger.info(`  - 收集文件数: ${evidenceData.availableFiles.length}`);
+        this.logger.info(`  - 收集耗时: ${evidenceData.collectionTime}ms`);
+        
+        // 输出摘要内容的各个部分
+        summaryParts.forEach((part, index) => {
+            const sectionName = part.split(':')[0].trim();
+            const sectionLength = part.length;
+            this.logger.info(`  - 第${index + 1}部分 [${sectionName}]: ${sectionLength}字符`);
+        });
+        
+        // 输出完整的摘要内容 - 这是你想要看到的700多字符的内容
+        this.logger.info('📋 完整证据摘要内容:');
+        this.logger.info('═══════════════════════════════════════════════════════════');
+        this.logger.info(finalSummary);
+        this.logger.info('═══════════════════════════════════════════════════════════');
+        
+        return finalSummary;
     }
 
     /**
