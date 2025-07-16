@@ -1,10 +1,9 @@
 import * as vscode from 'vscode';
 import * as os from 'os';
 import { Logger } from './functions/logger';
-import { ScopeOptimizationAgent } from './core/ScopeAgent';
+import { ScopeIntelligentAgent } from './agent/ScopeIntelligentAgent';
 import { ToolRegistry } from './framework/tools/ToolRegistry';
 import { ToolLoader, initializeGlobalToolLoader } from './framework/tools/ToolLoader';
-import { ToolAdapter } from './framework/tools/ToolAdapter';
 import { AgentDemo } from './demo/AgentDemo';
 import {
     AgentContext,
@@ -17,6 +16,9 @@ import {
 const username = os.userInfo().username;
 const tempPath = `C:\\Users\\${username}\\AppData\\Local\\Temp\\DataLakeTemp`;
 
+// 全局语言模型缓存
+let globalLanguageModels: vscode.LanguageModelChat[] = [];
+
 /**
  * SCOPE AI Agent扩展激活函数
  */
@@ -25,9 +27,22 @@ export async function activate(context: vscode.ExtensionContext) {
     logger.info("🚀 SCOPE AI Agent Extension activated");
 
     // 初始化核心组件
-    const scopeAgent = new ScopeOptimizationAgent(logger);
     const toolRegistry = new ToolRegistry(logger);
     const agentDemo = new AgentDemo();
+
+    // 简单预加载语言模型，避免首次使用延迟
+    logger.info('🤖 预加载语言模型...');
+    try {
+        globalLanguageModels = await vscode.lm.selectChatModels();
+        if (globalLanguageModels.length > 0) {
+            logger.info(`✅ 预加载成功，发现 ${globalLanguageModels.length} 个模型`);
+        } else {
+            logger.warn('⚠️ 未发现可用模型，将在需要时重试');
+        }
+    } catch (error) {
+        logger.error(`❌ 预加载语言模型失败: ${error}`);
+        // 不阻止扩展继续加载
+    }
 
     // 初始化工具加载器并加载所有工具
     let toolLoader: ToolLoader;
@@ -40,16 +55,18 @@ export async function activate(context: vscode.ExtensionContext) {
         return;
     }
 
-    // 创建工具适配器并注册到Agent
-    const toolAdapter = new ToolAdapter(logger);
-    const availableTools = toolRegistry.getAllTools();
+    // 创建智能Agent
+    const scopeAgent = new ScopeIntelligentAgent(logger, toolRegistry);
     
-    availableTools.forEach(analysisTool => {
-        const adaptedTool = toolAdapter.adaptTool(analysisTool);
-        scopeAgent.registerTool(adaptedTool as any);
-    });
+    // 初始化Agent
+    const agentInitialized = await scopeAgent.initialize();
+    if (!agentInitialized) {
+        logger.error('❌ AI Agent初始化失败');
+        vscode.window.showErrorMessage('AI Agent初始化失败');
+        return;
+    }
     
-    logger.info(`✅ 已注册 ${availableTools.length} 个工具到Agent`);
+    logger.info(`✅ AI Agent已成功初始化`);
 
     // 对话历史管理
     const conversationHistory: ConversationMessage[] = [];
@@ -129,19 +146,28 @@ export async function activate(context: vscode.ExtensionContext) {
      */
     async function checkLanguageModelAvailability(): Promise<boolean> {
         try {
-            const availableModels = await vscode.lm.selectChatModels();
-            logger.info(`Available language models: ${availableModels.length}`);
-            
-            if (availableModels.length === 0) {
-                logger.warn("No language models available");
-                return false;
+            // 如果已经有缓存的模型，直接返回
+            if (globalLanguageModels.length > 0) {
+                logger.info(`✅ 语言模型可用: ${globalLanguageModels.length} 个模型`);
+                return true;
             }
             
-            availableModels.forEach((model, index) => {
-                logger.info(`Model ${index}: ${model.id}, family: ${model.family}`);
-            });
+            // 尝试重新获取模型，增加重试机制
+            for (let i = 0; i < 3; i++) {
+                try {
+                    globalLanguageModels = await vscode.lm.selectChatModels();
+                    if (globalLanguageModels.length > 0) {
+                        logger.info(`✅ 重试成功，发现 ${globalLanguageModels.length} 个模型`);
+                        return true;
+                    }
+                } catch (error) {
+                    logger.warn(`重试 ${i + 1}/3 失败: ${error}`);
+                    if (i < 2) await new Promise(resolve => setTimeout(resolve, 1000));
+                }
+            }
             
-            return true;
+            logger.error("❌ 重试后仍无法获取语言模型");
+            return false;
         } catch (error) {
             logger.error(`Error checking available models: ${error}`);
             return false;
@@ -223,11 +249,13 @@ export async function activate(context: vscode.ExtensionContext) {
 	 * @returns 是否与性能优化相关
 	 */
 	async function isOptimizationRelatedQuery(query: string, token: vscode.CancellationToken): Promise<boolean> {
-		//Try to get smaller/faster models for intent detection to avoid wasting big model resources
-		const chatModels = await vscode.lm.selectChatModels({family: 'gpt-4o'});
-		if (!chatModels || chatModels.length === 0) {
+		// 尝试获取gpt-4o模型用于意图检测
+		const gpt4oModels = globalLanguageModels.filter(m => m.family === 'gpt-4o');
+		const chatModel = gpt4oModels.length > 0 ? gpt4oModels[0] : globalLanguageModels[0];
+		
+		if (!chatModel) {
 			logger.warn("No chat models available, falling back to keyword matching");
-			// back to the key words matching
+			// 回退到关键词匹配
 			return query.toLowerCase().includes('job') || 
 				query.toLowerCase().includes('optimize') || 
 				query.toLowerCase().includes('performance') ||
@@ -252,8 +280,8 @@ export async function activate(context: vscode.ExtensionContext) {
 				vscode.LanguageModelChatMessage.User(intent_prompt)
 			];
 			
-			// send request
-			const response = await chatModels[0].sendRequest(messages, undefined, token);
+					// send request
+		const response = await chatModel.sendRequest(messages, undefined, token);
 			let responseText = "";
 			for await (const chunk of response.text) {
 				responseText += chunk;
@@ -278,7 +306,7 @@ export async function activate(context: vscode.ExtensionContext) {
 	}
 
     /**
-     * 执行完整的AI Agent工作流
+     * 执行真正的AI Agent工作流
      */
     async function runAgentWorkflow(userInput: string, context: AgentContext, response: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<void> {
         try {
@@ -299,35 +327,26 @@ export async function activate(context: vscode.ExtensionContext) {
                 
                 response.markdown(`✅ **已选择作业**: ${require('path').basename(selectedJobFolder)}\n\n`);
                 
+                // 设置Agent的当前作业文件夹
+                scopeAgent.setCurrentJobFolder(selectedJobFolder);
+                
                 // 更新context中的工作空间状态
                 context.workspaceState.currentJobFolder = selectedJobFolder;
                 context.workspaceState.scopeFilesAvailable = true;
             }
 
-            // 使用简化的工具执行流程
-            response.markdown("🔧 **工具分析阶段** - 开始分析SCOPE作业...\n");
+            // 使用AI Agent进行智能分析
+            response.markdown("🧠 **AI Agent智能分析**\n\n");
             
-            const analysisResult = await executeSimpleAnalysis(selectedJobFolder, userInput, response, token);
+            const sessionId = context.sessionId || 'default';
+            const analysisResult = await scopeAgent.processQuery(userInput, sessionId);
             
-            if (analysisResult.success) {
-                response.markdown(`✅ **分析成功**\n\n`);
-                response.markdown("## 📊 分析结果\n\n");
-                response.markdown(analysisResult.explanation + "\n\n");
-                
-                if (analysisResult.suggestions && analysisResult.suggestions.length > 0) {
-                    response.markdown("## 💡 优化建议\n\n");
-                    analysisResult.suggestions.forEach((suggestion, index) => {
-                        response.markdown(`${index + 1}. ${suggestion}\n`);
-                    });
-                    response.markdown("\n");
-                }
-            } else {
-                response.markdown(`❌ **分析失败**: ${analysisResult.explanation}\n\n`);
-            }
+            response.markdown("## 📊 分析结果\n\n");
+            response.markdown(analysisResult + "\n\n");
 
             // 记录对话
             addToConversationHistory('user', userInput);
-            addToConversationHistory('agent', analysisResult.explanation);
+            addToConversationHistory('agent', analysisResult);
 
         } catch (error) {
             logger.error(`Agent workflow failed: ${error}`);
@@ -336,159 +355,8 @@ export async function activate(context: vscode.ExtensionContext) {
         }
     }
 
-    /**
-     * 执行简化的分析流程
-     */
-    async function executeSimpleAnalysis(jobFolder: string | null, userInput: string, response: vscode.ChatResponseStream, token: vscode.CancellationToken): Promise<{success: boolean, explanation: string, suggestions?: string[]}> {
-        if (!jobFolder) {
-            return {
-                success: false,
-                explanation: "未选择作业文件夹，无法进行分析"
-            };
-        }
-
-        try {
-            const fs = require('fs');
-            const path = require('path');
-            
-            // 发现文件
-            response.markdown("🔍 **发现文件**\n");
-            const files = fs.readdirSync(jobFolder);
-            const foundFiles = {
-                scopeScript: files.find((f: string) => f.toLowerCase() === 'scope.script'),
-                vertexDef: files.find((f: string) => f.toLowerCase() === 'scopevertexdef.xml'),
-                runtimeStats: files.find((f: string) => f.toLowerCase() === '__scoperuntimestatistics__.xml'),
-                jobStats: files.find((f: string) => f.toLowerCase() === 'jobstatistics.xml'),
-                codeGen: files.find((f: string) => f.toLowerCase() === '__scopecodegen__.dll.cs'),
-                errorLog: files.find((f: string) => f.toLowerCase() === 'error')
-            };
-
-            response.markdown(`- 发现 ${Object.values(foundFiles).filter(f => f).length} 个相关文件\n`);
-
-            // 使用工具分析文件
-            const results: any = {};
-            
-            // 1. 分析顶点定义
-            if (foundFiles.vertexDef) {
-                response.markdown("🔧 **分析顶点定义**\n");
-                const result = await toolRegistry.executeTool('extractVertex', {
-                    filePath: path.join(jobFolder, foundFiles.vertexDef),
-                    fileType: 'VERTEX_DEFINITION',
-                    analysisGoal: 'performance_analysis'
-                });
-                if (result.success) {
-                    results.vertexAnalysis = result.data;
-                    response.markdown(`- 发现 ${result.data.vertices?.length || 0} 个顶点\n`);
-                }
-            }
-
-            // 2. 分析运行时统计
-            if (foundFiles.runtimeStats) {
-                response.markdown("🔧 **分析运行时统计**\n");
-                const result = await toolRegistry.executeTool('extractRuntime2', {
-                    filePath: path.join(jobFolder, foundFiles.runtimeStats),
-                    fileType: 'RUNTIME_STATS',
-                    analysisGoal: 'performance_analysis'
-                });
-                if (result.success) {
-                    results.runtimeStats = result.data;
-                    response.markdown(`- 运行时统计分析完成\n`);
-                }
-            }
-
-            // 3. 读取SCOPE脚本
-            if (foundFiles.scopeScript) {
-                response.markdown("🔧 **读取SCOPE脚本**\n");
-                const result = await toolRegistry.executeTool('scopeScriptReader', {
-                    filePath: path.join(jobFolder, foundFiles.scopeScript),
-                    fileType: 'SCOPE_SCRIPT',
-                    analysisGoal: 'performance_analysis'
-                });
-                if (result.success) {
-                    results.scriptAnalysis = result.data;
-                    response.markdown(`- SCOPE脚本分析完成\n`);
-                }
-            }
-
-            // 4. 分析错误日志
-            if (foundFiles.errorLog) {
-                response.markdown("🔧 **分析错误日志**\n");
-                const result = await toolRegistry.executeTool('errorLogReader', {
-                    filePath: path.join(jobFolder, foundFiles.errorLog),
-                    fileType: 'ERROR_INFO',
-                    analysisGoal: 'error_analysis'
-                });
-                if (result.success) {
-                    results.errorAnalysis = result.data;
-                    response.markdown(`- 错误日志分析完成\n`);
-                }
-            }
-
-            // 生成综合分析结果
-            const analysis = generateAnalysisReport(results, userInput);
-            
-            return {
-                success: true,
-                explanation: analysis.explanation,
-                suggestions: analysis.suggestions
-            };
-
-        } catch (error) {
-            logger.error(`Simple analysis failed: ${error}`);
-            return {
-                success: false,
-                explanation: `分析过程出错: ${error instanceof Error ? error.message : String(error)}`
-            };
-        }
-    }
-
-    /**
-     * 生成分析报告
-     */
-    function generateAnalysisReport(results: any, userInput: string): {explanation: string, suggestions: string[]} {
-        let explanation = "📊 **SCOPE作业分析报告**\n\n";
-        const suggestions: string[] = [];
-
-        // 顶点分析
-        if (results.vertexAnalysis) {
-            const vertexCount = results.vertexAnalysis.vertices?.length || 0;
-            explanation += `🔹 **顶点分析**: 发现 ${vertexCount} 个计算顶点\n`;
-            
-            if (vertexCount > 10) {
-                suggestions.push("作业包含较多计算顶点，建议检查是否可以合并相关操作以减少复杂度");
-            }
-        }
-
-        // 运行时统计分析
-        if (results.runtimeStats) {
-            explanation += `🔹 **运行时统计**: 已分析执行性能数据\n`;
-            suggestions.push("建议关注执行时间较长的顶点，可能存在性能瓶颈");
-        }
-
-        // 脚本分析
-        if (results.scriptAnalysis) {
-            explanation += `🔹 **脚本分析**: 已分析SCOPE脚本结构\n`;
-            suggestions.push("建议检查脚本中的JOIN操作和聚合操作的效率");
-        }
-
-        // 错误分析
-        if (results.errorAnalysis) {
-            explanation += `🔹 **错误分析**: 发现作业执行错误\n`;
-            suggestions.push("建议优先解决错误日志中的问题");
-            
-            if (results.errorAnalysis.errors && results.errorAnalysis.errors.length > 0) {
-                explanation += `  - 错误类型: ${results.errorAnalysis.errors[0].category || '未知'}\n`;
-            }
-        }
-
-        // 通用建议
-        if (suggestions.length === 0) {
-            suggestions.push("基于当前分析，建议关注数据处理效率和资源使用情况");
-            suggestions.push("可以考虑优化JOIN操作和数据分区策略");
-        }
-
-        return { explanation, suggestions };
-    }
+    // 旧的分析函数已被AI Agent取代，这里保留一个简化版本作为备用
+    // AI Agent现在会自主决定调用哪些工具和如何分析
 
     // ========== Chat Participant ==========
 
@@ -529,27 +397,43 @@ export async function activate(context: vscode.ExtensionContext) {
         vscode.window.showInformationMessage(`可用工具:\n\n${tools}`, { modal: true });
     });
 
+    // 刷新语言模型缓存命令
+    const refreshModelsCommand = vscode.commands.registerCommand('scope-ai-agent.refresh.models', async () => {
+        try {
+            vscode.window.showInformationMessage('🔄 正在刷新语言模型缓存...');
+            
+            globalLanguageModels = await vscode.lm.selectChatModels();
+            
+            if (globalLanguageModels.length > 0) {
+                vscode.window.showInformationMessage(
+                    `✅ 语言模型缓存刷新成功！发现 ${globalLanguageModels.length} 个模型`, 
+                    { modal: true }
+                );
+                logger.info(`✅ 手动刷新模型缓存成功: ${globalLanguageModels.length} 个模型`);
+            } else {
+                vscode.window.showErrorMessage('❌ 语言模型缓存刷新失败，请检查Copilot连接状态');
+                logger.error('❌ 手动刷新模型缓存失败');
+            }
+        } catch (error) {
+            const errorMessage = `刷新语言模型缓存时出错: ${error instanceof Error ? error.message : String(error)}`;
+            vscode.window.showErrorMessage(errorMessage);
+            logger.error(`❌ 手动刷新模型缓存出错: ${error}`);
+        }
+    });
+
+
+
     // 分析SCOPE脚本命令（传统兼容性）
     const analyzeScriptCommand = vscode.commands.registerCommand('scope-opt-agent.analyzeScript', async () => {
-        const agentContext = createAgentContext('分析当前SCOPE脚本的性能');
-        
         try {
-            const initialized = await scopeAgent.initialize();
-            if (!initialized) {
-                vscode.window.showErrorMessage('Agent初始化失败，请检查语言模型配置');
-                return;
-            }
-
             vscode.window.showInformationMessage('AI Agent正在分析SCOPE脚本...');
             
-            const thought = await scopeAgent.think('分析SCOPE脚本性能', agentContext);
-            const plan = await scopeAgent.plan(thought, agentContext);
-            const result = await scopeAgent.execute(plan, agentContext);
+            const result = await scopeAgent.processQuery('分析当前SCOPE脚本的性能', 'command_session');
             
-            if (result.success) {
-                vscode.window.showInformationMessage(`分析完成！发现了${result.suggestions?.length || 0}个优化建议`);
+            if (result.includes('❌')) {
+                vscode.window.showErrorMessage(`分析失败: ${result}`);
             } else {
-                vscode.window.showErrorMessage(`分析失败: ${result.explanation}`);
+                vscode.window.showInformationMessage('分析完成！请查看Chat面板获取详细结果');
             }
         } catch (error) {
             logger.error(`Analyze script command failed: ${error}`);
@@ -562,6 +446,7 @@ export async function activate(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         chatParticipant,
         showToolsCommand,
+        refreshModelsCommand,
         analyzeScriptCommand
     );
 
