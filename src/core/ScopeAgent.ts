@@ -73,11 +73,11 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.logger = logger;
         this.languageModel = new LanguageModelService(logger);
         this.securityManager = new SecurityManager(logger, {
-            maxFileSize: 10 * 1024 * 1024,  // 10MB限制（适合SCOPE文件）
+            maxFileSize: 50 * 1024 * 1024,  // 10MB限制（适合SCOPE文件）
             allowedExtensions: ['.xml', '.txt', '.log', '.json', '.csv'],
             maxProcessingTime: 15000,        // 15秒超时
             enableVirusCheck: true,          // 启用病毒检查
-            maxConcurrentChecks: 3           // 最多3个并发检查
+            maxConcurrentChecks: 5           // 最多3个并发检查
         });
         this.currentStatus = {
             state: 'idle',

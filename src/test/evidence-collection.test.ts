@@ -14,11 +14,13 @@ suite('Evidence Collection Tests', () => {
     let mockContext: AgentContext;
 
     setup(() => {
-        logger = new Logger();
+        logger = new Logger('Test Logger');
         agent = new ScopeOptimizationAgent(logger);
         
         // 模拟上下文
         mockContext = {
+            userId: 'test-user',
+            sessionId: 'test-session',
             conversationHistory: [],
             workspaceState: {
                 activeFiles: [],
@@ -32,7 +34,10 @@ suite('Evidence Collection Tests', () => {
                 preferredAnalysisDepth: 'detailed',
                 language: 'zh',
                 reportFormat: 'markdown'
-            }
+            },
+            timestamp: new Date(),
+            availableTools: [],
+            memorySnapshot: {}
         };
     });
 
