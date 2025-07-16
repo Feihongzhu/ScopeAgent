@@ -304,30 +304,73 @@ export async function activate(context: vscode.ExtensionContext) {
                 context.workspaceState.scopeFilesAvailable = true;
             }
 
-            // 使用简化的工具执行流程
-            response.markdown("🔧 **工具分析阶段** - 开始分析SCOPE作业...\n");
+            // 使用完整的AI Agent工作流程（包含证据收集系统）
+            response.markdown("🧠 **AI思考阶段** - 分析用户意图和收集运行证据...\n");
             
-            const analysisResult = await executeSimpleAnalysis(selectedJobFolder, userInput, response, token);
+            // 初始化Agent
+            const initialized = await scopeAgent.initialize();
+            if (!initialized) {
+                response.markdown("❌ **Agent初始化失败**\n\n请检查语言模型配置。");
+                return;
+            }
             
-            if (analysisResult.success) {
-                response.markdown(`✅ **分析成功**\n\n`);
+            // 执行完整的Agent工作流程
+            const thought = await scopeAgent.think(userInput, context);
+            response.markdown(`✅ **思考完成** - 意图: ${thought.intent} (置信度: ${thought.confidence.toFixed(2)})\n\n`);
+            
+            response.markdown("📋 **AI规划阶段** - 制定执行计划...\n");
+            const plan = await scopeAgent.plan(thought, context);
+            response.markdown(`✅ **规划完成** - 计划包含${plan.steps.length}个步骤\n\n`);
+            
+            response.markdown("⚡ **AI执行阶段** - 智能调用工具链...\n");
+            const result = await scopeAgent.execute(plan, context);
+            
+            if (result.success) {
+                response.markdown(`✅ **执行成功** (置信度: ${result.confidence.toFixed(2)})\n\n`);
                 response.markdown("## 📊 分析结果\n\n");
-                response.markdown(analysisResult.explanation + "\n\n");
+                response.markdown(result.explanation + "\n\n");
                 
-                if (analysisResult.suggestions && analysisResult.suggestions.length > 0) {
+                if (result.suggestions && result.suggestions.length > 0) {
                     response.markdown("## 💡 优化建议\n\n");
-                    analysisResult.suggestions.forEach((suggestion, index) => {
-                        response.markdown(`${index + 1}. ${suggestion}\n`);
+                    result.suggestions.forEach((suggestion, index) => {
+                        response.markdown(`${suggestion}\n\n`);
+                    });
+                }
+                
+                // 显示性能指标
+                if (result.metrics) {
+                    response.markdown("## 📈 性能指标\n\n");
+                    response.markdown(`- 执行时间: ${result.metrics.executionTime}ms\n`);
+                    response.markdown(`- 成功率: ${(result.metrics.successRate * 100).toFixed(1)}%\n`);
+                    response.markdown(`- 使用工具: ${result.metrics.toolsUsed}个\n\n`);
+                }
+                
+                // 显示下一步建议
+                if (result.nextSteps && result.nextSteps.length > 0) {
+                    response.markdown("## 🎯 下一步建议\n\n");
+                    result.nextSteps.forEach((step, index) => {
+                        response.markdown(`${index + 1}. ${step}\n`);
                     });
                     response.markdown("\n");
                 }
             } else {
-                response.markdown(`❌ **分析失败**: ${analysisResult.explanation}\n\n`);
+                response.markdown(`❌ **执行失败**: ${result.explanation}\n\n`);
+                if (result.errors && result.errors.length > 0) {
+                    response.markdown("### 错误详情\n\n");
+                    result.errors.forEach((error, index) => {
+                        response.markdown(`${index + 1}. ${error.message}\n`);
+                    });
+                }
             }
+            
+            // 执行反思学习
+            response.markdown("🤔 **AI反思阶段** - 学习和改进...\n");
+            const learning = await scopeAgent.reflect(result, context);
+            response.markdown(`✅ **反思完成** - 识别了${learning.improvements.length}个改进点\n\n`);
 
             // 记录对话
             addToConversationHistory('user', userInput);
-            addToConversationHistory('agent', analysisResult.explanation);
+            addToConversationHistory('agent', result.explanation);
 
         } catch (error) {
             logger.error(`Agent workflow failed: ${error}`);
