@@ -4,7 +4,6 @@ import { Logger } from './functions/logger';
 import { ScopeIntelligentAgent } from './agent/ScopeIntelligentAgent';
 import { ToolRegistry } from './framework/tools/ToolRegistry';
 import { ToolLoader, initializeGlobalToolLoader } from './framework/tools/ToolLoader';
-import { AgentDemo } from './demo/AgentDemo';
 import {
     AgentContext,
     ConversationMessage,
@@ -28,7 +27,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // 初始化核心组件
     const toolRegistry = new ToolRegistry(logger);
-    const agentDemo = new AgentDemo();
 
     // 简单预加载语言模型，避免首次使用延迟
     logger.info('🤖 预加载语言模型...');
