@@ -73,19 +73,15 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.logger = logger;
         this.languageModel = new LanguageModelService(logger);
         this.securityManager = new SecurityManager(logger, {
-            maxFileSize: 50 * 1024 * 1024,  // 10MB限制（适合SCOPE文件）
+            maxFileSize: 50 * 1024 * 1024,
             allowedExtensions: ['.xml', '.txt', '.log', '.json', '.csv'],
-            maxProcessingTime: 15000,        // 15秒超时
-            enableVirusCheck: true,          // 启用病毒检查
-            maxConcurrentChecks: 5           // 最多3个并发检查
+            maxProcessingTime: 15000,
+            enableVirusCheck: true,
+            maxConcurrentChecks: 5
         });
-        this.currentStatus = {
-            state: 'idle',
-            lastActivity: new Date()
-        };
-        
+        this.currentStatus = { state: 'idle', lastActivity: new Date() };
         this.initializeBaseLearning();
-        this.logger.info(`Initialized intelligent SCOPE AI Agent: ${this.name}`);
+        this.logger.info(`SCOPE AI Agent initialized`);
     }
 
     /**
@@ -95,11 +91,9 @@ export class ScopeOptimizationAgent implements AgentCore {
         try {
             const modelInitialized = await this.languageModel.initialize();
             if (!modelInitialized) {
-                this.logger.error('Failed to initialize language model');
+                this.logger.error('Language model initialization failed');
                 return false;
             }
-
-            this.logger.info('SCOPE AI Agent initialized successfully');
             return true;
         } catch (error) {
             this.logger.error(`Agent initialization failed: ${error}`);
@@ -115,14 +109,12 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.updateStatus('thinking', '分析用户意图和问题类型');
         
         try {
-            this.logger.info(`🧠 Agent thinking about: "${input}"`);
+            this.logger.info(`Thinking about: "${input}"`);
             
-            // 阶段1新增：先收集运行证据
-            this.logger.info('📊 思考阶段: 开始收集运行证据以增强意图分析...');
+            // 收集运行证据
             const evidenceData = await this.collectEvidence(context);
             
-            // 将证据融入上下文，增强意图分析
-            this.logger.info('🔗 思考阶段: 使用证据数据增强分析上下文...');
+            // 增强分析上下文
             const enhancedContext = this.enhanceContextWithEvidence(context, evidenceData);
             
             // 使用语言模型进行智能意图分析
@@ -164,7 +156,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.remember(`thought_${thought.id}`, thought, 0.6);
 
             const thinkingTime = Date.now() - startTime;
-            this.logger.info(`🧠 Thinking completed in ${thinkingTime}ms - Intent: ${thought.intent} (${thought.confidence.toFixed(2)} confidence)`);
+            this.logger.info(`Thinking completed in ${thinkingTime}ms - Intent: ${thought.intent}`);
             
             return thought;
 
@@ -187,7 +179,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.updateStatus('planning', '制定执行计划和工具调用策略');
         
         try {
-            this.logger.info(`📋 Agent planning for intent: ${thought.intent}`);
+            this.logger.info(`Planning for intent: ${thought.intent}`);
             
             const availableTools = Array.from(this.tools.keys());
             
@@ -245,7 +237,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.remember(`plan_${plan.id}`, plan, 0.7);
 
             const planningTime = Date.now() - startTime;
-            this.logger.info(`📋 Planning completed in ${planningTime}ms - ${steps.length} steps, estimated ${plan.estimatedTime}ms`);
+            this.logger.info(`Planning completed in ${planningTime}ms - ${steps.length} steps`);
             
             return plan;
 
@@ -268,7 +260,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.updateStatus('executing', `执行${plan.steps.length}个步骤的计划`);
         
         try {
-            this.logger.info(`⚡ Agent executing plan: ${plan.id} with ${plan.steps.length} steps`);
+            this.logger.info(`Executing plan: ${plan.id} with ${plan.steps.length} steps`);
             
             const executionResults: any[] = [];
             const executionErrors: ExecutionError[] = [];
@@ -295,7 +287,7 @@ export class ScopeOptimizationAgent implements AgentCore {
                         throw new Error(`Tool not found: ${step.tool}`);
                     }
 
-                    this.logger.info(`🔧 Executing tool: ${step.tool} for step: ${step.description}`);
+                    this.logger.info(`Executing tool: ${step.tool}`);
                     const toolResult = await this.executeToolWithTimeout(tool, adjustedInput, step.timeout || 30000, context);
                     
                     if (toolResult.success) {
@@ -311,13 +303,13 @@ export class ScopeOptimizationAgent implements AgentCore {
                             toolsUsed.push(step.tool);
                         }
                         
-                        this.logger.info(`✅ Step ${step.id} completed successfully`);
+                        this.logger.info(`Step ${step.id} completed successfully`);
                     } else {
                         throw new Error(`Tool execution failed: ${toolResult.errors?.join(', ') || 'Unknown error'}`);
                     }
 
                 } catch (stepError) {
-                    this.logger.warn(`❌ Step ${step.id} failed: ${stepError}`);
+                    this.logger.warn(`Step ${step.id} failed: ${stepError}`);
                     
                     const error: ExecutionError = {
                         code: 'STEP_EXECUTION_FAILED',
@@ -404,7 +396,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             // 更新性能统计
             this.updatePerformanceStats(result);
 
-            this.logger.info(`⚡ Execution completed in ${executionTime}ms - Success: ${success}, Confidence: ${confidence.toFixed(2)}`);
+            this.logger.info(`Execution completed in ${executionTime}ms - Success: ${success}`);
             
             return result;
 
@@ -426,7 +418,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         this.updateStatus('reflecting', '分析执行结果并学习改进');
         
         try {
-            this.logger.info(`🤔 Agent reflecting on result: ${result.id}`);
+            this.logger.info(`Reflecting on result: ${result.id}`);
             
             const lastThought = this.recall('last_thought') as AgentThought;
             const expectedOutcome = lastThought ? `实现用户意图: ${lastThought.intent}` : '完成任务';
@@ -471,7 +463,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.remember(`learning_${Date.now()}`, learning, 0.5);
 
             const reflectionTime = Date.now() - startTime;
-            this.logger.info(`🤔 Reflection completed in ${reflectionTime}ms - ${learning.improvements.length} improvements identified`);
+            this.logger.info(`Reflection completed in ${reflectionTime}ms - ${learning.improvements.length} improvements identified`);
             
             this.performanceStats.learningEvents++;
             
@@ -497,20 +489,20 @@ export class ScopeOptimizationAgent implements AgentCore {
                 throw new Error(`Tool '${toolName}' not found. Available tools: ${Array.from(this.tools.keys()).join(', ')}`);
             }
 
-            this.logger.info(`🔧 Using tool: ${toolName}`);
+            this.logger.info(`Using tool: ${toolName}`);
             
             // 构造工具输入
             const toolInput: ToolInput = {
                 filePath: params.filePath || '',
                 fileType: params.fileType || '',
                 analysisGoal: params.analysisGoal || 'general_analysis',
-                context: undefined  // 简化版本暂时不传递context
+                context: undefined
             };
 
             // 执行工具
             const result = await tool.execute(toolInput);
             
-            this.logger.info(`🔧 Tool ${toolName} executed successfully`);
+            this.logger.info(`Tool ${toolName} executed successfully`);
             return result;
 
         } catch (error) {
@@ -569,7 +561,7 @@ export class ScopeOptimizationAgent implements AgentCore {
      */
     async learn(feedback: AgentFeedback): Promise<void> {
         try {
-            this.logger.info(`📚 Learning from feedback: ${feedback.rating}/5 stars`);
+            this.logger.info(`Learning from feedback: ${feedback.rating}/5 stars`);
             
             // 分析反馈模式
             const feedbackPatterns = this.analyzeFeedbackPatterns(feedback);
@@ -583,7 +575,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             // 记住反馈
             this.remember(`feedback_${feedback.id}`, feedback, 0.7);
             
-            this.logger.info(`📚 Learning completed from feedback ${feedback.id}`);
+            this.logger.info(`Learning completed from feedback ${feedback.id}`);
 
         } catch (error) {
             this.logger.error(`Learning from feedback failed: ${error}`);
@@ -595,7 +587,7 @@ export class ScopeOptimizationAgent implements AgentCore {
      */
     registerTool(tool: AnalysisTool): void {
         this.tools.set(tool.name, tool);
-        this.logger.info(`🔧 Registered tool: ${tool.name} (${tool.category})`);
+        this.logger.info(`Registered tool: ${tool.name} (${tool.category})`);
     }
 
     /**
@@ -625,7 +617,6 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private initializeBaseLearning(): void {
-        // 初始化基础知识和经验
         this.baselineLearning.set('scope_optimization_patterns', [
             'JOIN操作是常见的性能瓶颈点',
             '数据倾斜会导致资源使用不均',
@@ -660,10 +651,9 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private adjustConfidenceBasedOnExperience(baseConfidence: number): number {
-        // 基于历史成功率调整信心度
         const successRate = this.performanceStats.totalRequests > 0 
             ? this.performanceStats.successfulRequests / this.performanceStats.totalRequests 
-            : 0.7; // 默认信心度
+            : 0.7;
         
         return Math.min(0.95, Math.max(0.1, baseConfidence * (0.5 + successRate * 0.5)));
     }
@@ -672,7 +662,6 @@ export class ScopeOptimizationAgent implements AgentCore {
         const riskFactors = [];
         let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
         
-        // 基于问题类型评估风险
         if (problemType === 'code_optimization' && context.userPreferences.autoApplyFixes) {
             riskFactors.push('自动应用优化可能影响现有代码');
             riskLevel = 'medium';
@@ -699,18 +688,15 @@ export class ScopeOptimizationAgent implements AgentCore {
     private analyzeContextualFactors(input: string, context: AgentContext): string[] {
         const factors = [];
         
-        // 时间因素
         const hour = new Date().getHours();
         if (hour < 9 || hour > 17) {
             factors.push('非工作时间，用户可能有紧急需求');
         }
         
-        // 用户行为模式
         if (context.conversationHistory.length > 5) {
             factors.push('用户在此会话中高度活跃');
         }
         
-        // 工作空间状态
         if (context.workspaceState.lastOptimization) {
             const daysSinceLastOptimization = (Date.now() - context.workspaceState.lastOptimization.getTime()) / (1000 * 60 * 60 * 24);
             if (daysSinceLastOptimization < 1) {
@@ -737,7 +723,7 @@ export class ScopeOptimizationAgent implements AgentCore {
                 confidenceImpact: -0.1
             },
             contextualFactors: ['使用备用分析模式'],
-            evidenceData: {  // 阶段1新增：备用模式下的空证据数据
+            evidenceData: {
                 hasData: false,
                 collectionTime: 0,
                 availableFiles: [],
@@ -747,9 +733,6 @@ export class ScopeOptimizationAgent implements AgentCore {
             timestamp: new Date()
         };
     }
-
-    // 这里继续实现其他私有方法...
-    // 为了保持文件可读性，我会在后续消息中继续实现剩余方法
 
     private createFallbackPlan(thought: AgentThought, context: AgentContext): AgentPlan {
         const steps: PlanStep[] = [{
@@ -803,7 +786,6 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private synthesizeExecutionResults(results: any[]): any {
-        // 综合所有执行结果
         const successfulResults = results.filter(r => r.success);
         const data: any = {
             summary: `执行了${results.length}个步骤，${successfulResults.length}个成功`,
@@ -811,26 +793,22 @@ export class ScopeOptimizationAgent implements AgentCore {
             executionTime: results.reduce((sum, r) => sum + (r.executionTime || 0), 0)
         };
 
-        // 如果有文件读取结果，添加到数据中
+        // 提取文件读取结果
         const fileReaderResults = successfulResults.filter(r => r.tool === 'scope_file_reader');
         if (fileReaderResults.length > 0) {
-            // 修复：正确提取ToolResult.data字段中的实际数据
             data.fileData = fileReaderResults[0].result.data;
         }
 
-        // 如果有性能分析结果，添加到数据中
+        // 提取性能分析结果
         const performanceResults = successfulResults.filter(r => r.tool === 'scope_performance_analyzer');
         if (performanceResults.length > 0) {
-            // 修复：正确提取ToolResult.data字段中的实际数据
             data.performanceAnalysis = performanceResults[0].result.data;
         }
 
-        // 如果有代码优化结果，添加到数据中
+        // 提取代码优化结果
         const optimizerResults = successfulResults.filter(r => r.tool === 'scope_code_optimizer');
         if (optimizerResults.length > 0) {
-            // 修复：正确提取ToolResult.data字段中的实际数据
             const optimizerData = optimizerResults[0].result.data;
-            // 将优化器的所有重要数据传递到最终结果中
             data.optimizations = optimizerData.optimizations || [];
             data.criticalIssues = optimizerData.criticalIssues || [];
             data.quickWins = optimizerData.quickWins || [];
@@ -839,10 +817,9 @@ export class ScopeOptimizationAgent implements AgentCore {
             data.performanceBottlenecks = optimizerData.performanceBottlenecks;
         }
 
-        // 如果有顶点分析结果，添加到数据中
+        // 提取顶点分析结果
         const vertexResults = successfulResults.filter(r => r.tool === 'scope_vertex_analyzer');
         if (vertexResults.length > 0) {
-            // 修复：正确提取ToolResult.data字段中的实际数据
             data.vertexAnalysis = vertexResults[0].result.data;
         }
 
@@ -866,13 +843,10 @@ export class ScopeOptimizationAgent implements AgentCore {
     private async generateIntelligentSuggestions(data: any, context: AgentContext): Promise<string[]> {
         const suggestions = [];
         
-        // 检查是否有新格式的优化数据
+        // 检查优化数据
         if (data.optimizations && Array.isArray(data.optimizations) && data.optimizations.length > 0) {
-            // 处理专业优化建议
             const criticalIssues = data.criticalIssues || [];
             const quickWins = data.quickWins || [];
-            
-            this.logger.info(`Processing optimizations: ${data.optimizations.length} total, ${criticalIssues.length} critical, ${quickWins.length} quick wins`);
             
             // 关键性能问题
             if (criticalIssues.length > 0) {
@@ -880,7 +854,6 @@ export class ScopeOptimizationAgent implements AgentCore {
                 criticalIssues.slice(0, 3).forEach((issue: any) => {
                     const issueText = issue.title || issue.description || '未知问题';
                     suggestions.push(`   • ${issueText}`);
-                    this.logger.debug(`Added critical issue: ${issueText}`);
                 });
             }
             
@@ -891,7 +864,6 @@ export class ScopeOptimizationAgent implements AgentCore {
                     const winTitle = win.title || win.description || '优化建议';
                     const improvement = win.estimatedImprovement || '提升明显';
                     suggestions.push(`   • ${winTitle}: 预期改进${improvement}`);
-                    this.logger.debug(`Added quick win: ${winTitle}`);
                 });
             }
             
@@ -907,7 +879,6 @@ export class ScopeOptimizationAgent implements AgentCore {
                         if (opt.compilerHint) {
                             suggestions.push(`     编译器提示: ${opt.compilerHint}`);
                         }
-                        this.logger.debug(`Added category optimization: ${optTitle}`);
                     });
                 }
             });
@@ -933,15 +904,15 @@ export class ScopeOptimizationAgent implements AgentCore {
                 this.logger.warn(`Failed to generate AI suggestions: ${error}`);
             }
             
-            // 备用通用建议
-            if (suggestions.length === 0) {
-                suggestions.push('🔍 **基于SCOPE最佳实践的通用优化建议:**');
-                suggestions.push('   • 使用BROADCAST JOIN优化小表与大表的连接');
-                suggestions.push('   • 添加SKEW hint处理数据倾斜问题');
-                suggestions.push('   • 优化GROUP BY操作的分区策略');
-                suggestions.push('   • 使用谓词下推减少数据传输量');
-                suggestions.push('   • 为重要操作添加SCOPE编译器提示');
-            }
+                    // 备用建议
+        if (suggestions.length === 0) {
+            suggestions.push('🔍 **基于SCOPE最佳实践的通用优化建议:**');
+            suggestions.push('   • 使用BROADCAST JOIN优化小表与大表的连接');
+            suggestions.push('   • 添加SKEW hint处理数据倾斜问题');
+            suggestions.push('   • 优化GROUP BY操作的分区策略');
+            suggestions.push('   • 使用谓词下推减少数据传输量');
+            suggestions.push('   • 为重要操作添加SCOPE编译器提示');
+        }
         }
         
         return suggestions;
@@ -953,17 +924,14 @@ export class ScopeOptimizationAgent implements AgentCore {
     private formatSuggestionObject(suggestion: any): string {
         const parts = [];
         
-        // 添加标题
         if (suggestion.title) {
             parts.push(`🔧 **${suggestion.title}**`);
         }
         
-        // 添加描述
         if (suggestion.description) {
             parts.push(`   ${suggestion.description}`);
         }
         
-        // 添加原始代码（如果存在）
         if (suggestion.originalCode) {
             parts.push(`   **原始代码:**`);
             parts.push(`   \`\`\`scope`);
@@ -971,7 +939,6 @@ export class ScopeOptimizationAgent implements AgentCore {
             parts.push(`   \`\`\``);
         }
         
-        // 添加优化后代码（如果存在）
         if (suggestion.optimizedCode) {
             parts.push(`   **优化后代码:**`);
             parts.push(`   \`\`\`scope`);
@@ -979,17 +946,14 @@ export class ScopeOptimizationAgent implements AgentCore {
             parts.push(`   \`\`\``);
         }
         
-        // 添加改进说明
         if (suggestion.improvement) {
             parts.push(`   **预期改进:** ${suggestion.improvement}`);
         }
         
-        // 添加编译器提示（如果存在）
         if (suggestion.compilerHint) {
             parts.push(`   **编译器提示:** ${suggestion.compilerHint}`);
         }
         
-        // 添加估计改进（如果存在）
         if (suggestion.estimatedImprovement) {
             parts.push(`   **性能提升:** ${suggestion.estimatedImprovement}`);
         }
@@ -1012,7 +976,6 @@ export class ScopeOptimizationAgent implements AgentCore {
             this.performanceStats.successfulRequests++;
         }
         
-        // 计算移动平均响应时间
         this.performanceStats.averageResponseTime = 
             (this.performanceStats.averageResponseTime * (this.performanceStats.totalRequests - 1) + result.executionTime) 
             / this.performanceStats.totalRequests;
@@ -1070,10 +1033,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         };
     }
 
-    // 其他辅助方法的实现...
-    
     private predictStepOutput(tool: string, input: any): any {
-        // 基于工具类型预测输出
         switch (tool) {
             case 'scope_file_reader':
                 return { filesRead: [], fileContents: {}, success: true };
@@ -1120,22 +1080,18 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private findRelatedMemories(key: string, value: any): string[] {
-        // 简化实现：返回空数组，实际可以实现更复杂的关联逻辑
         return [];
     }
 
     private cleanupMemory(): void {
-        // 删除最不重要且最久未访问的内存项
         const items = Array.from(this.memory.values())
             .sort((a, b) => (a.importance * a.accessCount) - (b.importance * b.accessCount))
-            .slice(0, 100); // 删除最不重要的100个
+            .slice(0, 100);
 
         items.forEach(item => this.memory.delete(item.key));
         this.logger.info(`Cleaned up ${items.length} memory items`);
     }
 
-    // 实现其他必需的私有方法...
-    
     private getNextStepId(currentStepId: string, steps: PlanStep[]): string | undefined {
         const currentIndex = steps.findIndex(s => s.id === currentStepId);
         return currentIndex < steps.length - 1 ? steps[currentIndex + 1].id : undefined;
@@ -1184,40 +1140,32 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private adjustStepInput(step: PlanStep, results: any[]): any {
-        // 基于前面步骤的结果调整输入
         let adjustedInput = { ...step.input };
 
-        // 获取文件读取步骤的结果，用于后续步骤
         const fileReaderResult = results.find(r => r.tool === 'scope_file_reader' && r.success);
         
         if (fileReaderResult && fileReaderResult.result.data) {
             const jobFolder = fileReaderResult.result.data.jobFolder;
             const fileContents = fileReaderResult.result.data.fileContents;
             
-            // 为性能分析器提供统计文件路径
             if (step.tool === 'scope_performance_analyzer') {
                 adjustedInput.statisticsFile = `${jobFolder}/__ScopeRuntimeStatistics__.xml`;
             }
             
-            // 为顶点分析器提供顶点定义文件路径和性能数据
             if (step.tool === 'scope_vertex_analyzer') {
                 adjustedInput.vertexDefFile = `${jobFolder}/ScopeVertexDef.xml`;
                 
-                // 如果有性能分析结果，传递给顶点分析器
                 const performanceResult = results.find(r => r.tool === 'scope_performance_analyzer' && r.success);
                 if (performanceResult) {
                     adjustedInput.performanceData = performanceResult.result.data;
                 }
             }
             
-            // 为代码优化器提供脚本内容和分析结果
             if (step.tool === 'scope_code_optimizer') {
-                // 传递scope.script内容
                 if (fileContents && fileContents['scope.script']) {
                     adjustedInput.scopeScript = fileContents['scope.script'];
                 }
                 
-                // 合并所有分析结果
                 const performanceResult = results.find(r => r.tool === 'scope_performance_analyzer' && r.success);
                 const vertexResult = results.find(r => r.tool === 'scope_vertex_analyzer' && r.success);
                 
@@ -1274,9 +1222,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         return warnings.length > 0 ? warnings : undefined;
     }
 
-    // 实现学习相关的方法
     private enhanceReflectionWithExperience(reflection: any, result: AgentResult, context: AgentContext): any {
-        // 基于历史经验增强反思结果
         return {
             whatWorked: reflection.whatWorked || ['完成了基本任务'],
             whatFailed: reflection.whatFailed || [],
@@ -1295,7 +1241,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private calculateLearningConfidence(item: string, result: AgentResult): number {
-        return result.confidence * 0.8; // 学习的信心度基于结果信心度
+        return result.confidence * 0.8;
     }
 
     private extractLearningContext(item: string, context: AgentContext): string {
@@ -1316,7 +1262,6 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private async applyLearning(learning: AgentLearning): Promise<void> {
-        // 应用学习结果到Agent的行为中
         this.logger.info(`Applied learning with ${learning.improvements.length} improvements`);
     }
 
@@ -1340,7 +1285,6 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     private async updateKnowledgeBase(feedback: AgentFeedback, patterns: any, adjustments: any[]): Promise<void> {
-        // 更新知识库
         this.baselineLearning.set(`feedback_pattern_${Date.now()}`, {
             patterns,
             adjustments,
@@ -1353,8 +1297,7 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
     /**
-     * 收集运行证据 - 阶段1新增（安全增强版）
-     * 在思考前先读取关键运行结果文件，包含完整的安全检查
+     * 收集运行证据
      */
     private async collectEvidence(context: AgentContext): Promise<EvidenceData> {
         const startTime = Date.now();
@@ -1368,14 +1311,12 @@ export class ScopeOptimizationAgent implements AgentCore {
         let warnings: any = null;
         
         try {
-            this.logger.info('🔍 开始收集运行证据（安全增强版）...');
+            this.logger.info('Collecting evidence...');
             
             const jobFolder = context.workspaceState.currentJobFolder || '';
             
-            // 检测当前文件夹的类型（精简版还是完整版）
             const folderType = await this.detectFolderType(jobFolder);
             
-            // 预定义需要检查的文件列表
             const targetFiles = [
                 '__ScopeRuntimeStatistics__.xml',
                 'JobInfo.xml',
@@ -1385,7 +1326,6 @@ export class ScopeOptimizationAgent implements AgentCore {
                 'ScopeVertexDef.xml'
             ];
             
-            // 安全检查所有目标文件
             const securityCheckPromises = targetFiles.map(async (fileName) => {
                 const filePath = require('path').join(jobFolder, fileName);
                 const securityResult = await this.securityManager.checkFileSecurity(filePath);
@@ -1395,57 +1335,54 @@ export class ScopeOptimizationAgent implements AgentCore {
             
             const securityChecks = await Promise.all(securityCheckPromises);
             
-            // 统计安全检查结果
             const safeFiles = securityChecks.filter(check => check.securityResult.safe);
             const blockedFiles = securityChecks.filter(check => !check.securityResult.safe);
             
-            this.logger.info(`🛡️ 安全检查完成: ${safeFiles.length}个安全文件，${blockedFiles.length}个被阻止文件`);
+            this.logger.info(`Security check complete: ${safeFiles.length} safe files, ${blockedFiles.length} blocked files`);
             
-            // 记录被阻止的文件
             if (blockedFiles.length > 0) {
                 blockedFiles.forEach(blocked => {
-                    this.logger.warn(`🚫 文件被阻止: ${blocked.fileName} - ${blocked.securityResult.issues.join(', ')}`);
+                    this.logger.warn(`Blocked file: ${blocked.fileName} - ${blocked.securityResult.issues.join(', ')}`);
                 });
             }
             
-            // 1. 尝试读取运行时统计数据 - 核心性能文件（仅安全文件）
+            // 读取运行时统计数据
             const runtimeFileCheck = securityChecks.find(check => check.fileName === '__ScopeRuntimeStatistics__.xml');
             if (this.tools.has('extractRuntime2') && runtimeFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('📊 开始读取运行时统计数据...');
+                    this.logger.info('Reading runtime statistics...');
                     const runtimeTool = this.tools.get('extractRuntime2')!;
                     
-                    // 添加超时机制
                     const runtimeResult = await Promise.race([
                         runtimeTool.execute({
                             filePath: runtimeFileCheck.filePath,
                             fileType: 'RUNTIME_STATS',
                             analysisGoal: 'runtime_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('运行时统计读取超时')), 30000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime statistics read timeout')), 30000))
                     ]) as ToolOutput;
                     
                     if (runtimeResult.success && runtimeResult.data) {
                         runtimeStats = runtimeResult.data;
                         availableFiles.push('__ScopeRuntimeStatistics__.xml');
-                        this.logger.info(`✅ 成功收集运行时统计数据`);
+                        this.logger.info(`Runtime statistics collected successfully`);
                     } else {
-                        this.logger.warn(`⚠️ 运行时统计数据读取失败: ${runtimeResult.errors?.join(', ') || '未知错误'}`);
+                        this.logger.warn(`Runtime statistics read failed: ${runtimeResult.errors?.join(', ') || 'Unknown error'}`);
                     }
                 } catch (error) {
-                    this.logger.error(`❌ 读取运行时统计失败: ${error}`);
+                    this.logger.error(`Runtime statistics read failed: ${error}`);
                 }
             } else if (runtimeFileCheck && !runtimeFileCheck.securityResult.safe) {
-                this.logger.warn(`🚫 运行时统计文件被安全检查阻止: ${runtimeFileCheck.securityResult.issues.join(', ')}`);
+                this.logger.warn(`Runtime statistics file blocked: ${runtimeFileCheck.securityResult.issues.join(', ')}`);
             } else {
-                this.logger.warn(`⚠️ 未找到extractRuntime2工具或运行时统计文件`);
+                this.logger.warn(`ExtractRuntime2 tool or runtime statistics file not found`);
             }
             
-            // 2. 尝试读取作业信息 - 作业状态和时间信息
+            // 读取作业信息
             const jobInfoFileCheck = securityChecks.find(check => check.fileName === 'JobInfo.xml');
             if (this.tools.has('extractRuntime') && jobInfoFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('📋 开始读取作业信息...');
+                    this.logger.info('Reading job information...');
                     const jobInfoTool = this.tools.get('extractRuntime')!;
                     
                     const jobInfoResult = await Promise.race([
@@ -1454,28 +1391,28 @@ export class ScopeOptimizationAgent implements AgentCore {
                             fileType: 'JOB_INFO',
                             analysisGoal: 'job_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('作业信息读取超时')), 15000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Job information read timeout')), 15000))
                     ]) as ToolOutput;
                     
                     if (jobInfoResult.success && jobInfoResult.data) {
                         jobInfo = jobInfoResult.data;
                         availableFiles.push('JobInfo.xml');
-                        this.logger.info('✅ 成功收集作业信息');
+                        this.logger.info('Job information collected successfully');
                     } else {
-                        this.logger.warn(`⚠️ 作业信息读取失败: ${jobInfoResult.errors?.join(', ') || '未知错误'}`);
+                        this.logger.warn(`Job information read failed: ${jobInfoResult.errors?.join(', ') || 'Unknown error'}`);
                     }
                 } catch (error) {
-                    this.logger.error(`❌ 读取作业信息失败: ${error}`);
+                    this.logger.error(`Job information read failed: ${error}`);
                 }
             } else {
-                this.logger.warn(`⚠️ 未找到extractRuntime工具或作业信息文件`);
+                this.logger.warn(`ExtractRuntime tool or job information file not found`);
             }
             
-            // 3. 尝试读取编译输出 - 编译性能和警告
+            // 读取编译输出
             const compileOutputFileCheck = securityChecks.find(check => check.fileName === '__ScopeCodeGenCompileOutput__.txt');
             if (this.tools.has('CSCodeReader') && compileOutputFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('⚙️ 开始读取编译输出...');
+                    this.logger.info('Reading compile output...');
                     const compileOutputTool = this.tools.get('CSCodeReader')!;
                     
                     const compileResult = await Promise.race([
@@ -1484,28 +1421,28 @@ export class ScopeOptimizationAgent implements AgentCore {
                             fileType: 'COMPILE_OUTPUT',
                             analysisGoal: 'compile_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('编译输出读取超时')), 20000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Compile output read timeout')), 20000))
                     ]) as ToolOutput;
                     
                     if (compileResult.success && compileResult.data) {
                         compileOutput = compileResult.data;
                         availableFiles.push('__ScopeCodeGenCompileOutput__.txt');
-                        this.logger.info('✅ 成功收集编译输出');
+                        this.logger.info('Compile output collected successfully');
                     } else {
-                        this.logger.warn(`⚠️ 编译输出读取失败: ${compileResult.errors?.join(', ') || '未知错误'}`);
+                        this.logger.warn(`Compile output read failed: ${compileResult.errors?.join(', ') || 'Unknown error'}`);
                     }
                 } catch (error) {
-                    this.logger.error(`❌ 读取编译输出失败: ${error}`);
+                    this.logger.error(`Compile output read failed: ${error}`);
                 }
             } else {
-                this.logger.warn(`⚠️ 未找到CSCodeReader工具或编译输出文件`);
+                this.logger.warn(`CSCodeReader tool or compile output file not found`);
             }
             
-            // 4. 尝试读取警告信息 - 优化建议的重要来源
+            // 读取警告信息
             const warningsFileCheck = securityChecks.find(check => check.fileName === '__Warnings__.xml');
             if (this.tools.has('extractRuntime') && warningsFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('⚠️ 开始读取警告信息...');
+                    this.logger.info('Reading warnings...');
                     const warningsTool = this.tools.get('extractRuntime')!;
                     
                     const warningsResult = await Promise.race([
@@ -1514,28 +1451,28 @@ export class ScopeOptimizationAgent implements AgentCore {
                             fileType: 'WARNINGS',
                             analysisGoal: 'warnings_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('警告信息读取超时')), 10000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Warnings read timeout')), 10000))
                     ]) as ToolOutput;
                     
                     if (warningsResult.success && warningsResult.data) {
                         warnings = warningsResult.data;
                         availableFiles.push('__Warnings__.xml');
-                        this.logger.info('✅ 成功收集警告信息');
+                        this.logger.info('Warnings collected successfully');
                     } else {
-                        this.logger.warn(`⚠️ 警告信息读取失败: ${warningsResult.errors?.join(', ') || '未知错误'}`);
+                        this.logger.warn(`Warnings read failed: ${warningsResult.errors?.join(', ') || 'Unknown error'}`);
                     }
                 } catch (error) {
-                    this.logger.error(`❌ 读取警告信息失败: ${error}`);
+                    this.logger.error(`Warnings read failed: ${error}`);
                 }
             } else {
-                this.logger.warn(`⚠️ 未找到extractRuntime工具或警告文件`);
+                this.logger.warn(`ExtractRuntime tool or warnings file not found`);
             }
             
-            // 5. 尝试读取错误日志（保持原有逻辑）
+            // 读取错误日志
             const errorFileCheck = securityChecks.find(check => check.fileName === 'Error');
             if (this.tools.has('ErrorLogReader') && errorFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('🚨 开始读取错误日志...');
+                    this.logger.info('Reading error logs...');
                     const errorTool = this.tools.get('ErrorLogReader')!;
                     
                     const errorResult = await Promise.race([
@@ -1544,7 +1481,7 @@ export class ScopeOptimizationAgent implements AgentCore {
                             fileType: 'ERROR_INFO',
                             analysisGoal: 'error_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('错误日志读取超时')), 10000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Error logs read timeout')), 10000))
                     ]) as ToolOutput;
                     
                     if (errorResult.success && errorResult.data) {
@@ -1561,11 +1498,11 @@ export class ScopeOptimizationAgent implements AgentCore {
                 this.logger.warn(`⚠️ 未找到ErrorLogReader工具或错误日志文件`);
             }
             
-            // 6. 尝试读取顶点信息（保持原有逻辑）
+            // 读取顶点信息
             const vertexFileCheck = securityChecks.find(check => check.fileName === 'ScopeVertexDef.xml');
             if (this.tools.has('extractVertex') && vertexFileCheck?.securityResult.safe) {
                 try {
-                    this.logger.info('🔗 开始读取顶点信息...');
+                    this.logger.info('Reading vertex information...');
                     const vertexTool = this.tools.get('extractVertex')!;
                     
                     const vertexResult = await Promise.race([
@@ -1574,30 +1511,28 @@ export class ScopeOptimizationAgent implements AgentCore {
                             fileType: 'VERTEX_DEFINITION',
                             analysisGoal: 'vertex_analysis'
                         }),
-                        new Promise((_, reject) => setTimeout(() => reject(new Error('顶点信息读取超时')), 20000))
+                        new Promise((_, reject) => setTimeout(() => reject(new Error('Vertex information read timeout')), 20000))
                     ]) as ToolOutput;
                     
                     if (vertexResult.success && vertexResult.data) {
                         vertexInfo = vertexResult.data;
                         availableFiles.push('ScopeVertexDef.xml');
-                        this.logger.info('✅ 成功收集顶点信息');
+                        this.logger.info('Vertex information collected successfully');
                     } else {
-                        this.logger.warn(`⚠️ 顶点信息读取失败: ${vertexResult.errors?.join(', ') || '未知错误'}`);
+                        this.logger.warn(`Vertex information read failed: ${vertexResult.errors?.join(', ') || 'Unknown error'}`);
                     }
                 } catch (error) {
-                    this.logger.error(`❌ 读取顶点信息失败: ${error}`);
+                    this.logger.error(`Vertex information read failed: ${error}`);
                 }
             } else {
-                this.logger.warn(`⚠️ 未找到extractVertex工具或顶点信息文件`);
+                this.logger.warn(`ExtractVertex tool or vertex information file not found`);
             }
             
             const collectionTime = Date.now() - startTime;
             const hasData = availableFiles.length > 0;
             
-            // 提取关键性能指标
             const keyMetrics = this.extractKeyMetrics(runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
             
-            // 生成安全状态信息
             const securityStatus = {
                 totalFiles: securityResults.length,
                 safeFiles: securityResults.filter(r => r.safe).length,
@@ -1609,29 +1544,8 @@ export class ScopeOptimizationAgent implements AgentCore {
                     securityResults.reduce((sum, r) => sum + r.checkTime, 0) / securityResults.length : 0
             };
             
-            this.logger.info(`🔍 证据收集完成，耗时${collectionTime}ms，收集到${availableFiles.length}个文件（${folderType}版本环境）`);
-            this.logger.info(`🛡️ 安全检查: ${securityStatus.safeFiles}/${securityStatus.totalFiles}个文件通过，平均检查时间${securityStatus.avgCheckTime.toFixed(1)}ms`);
-            
-            // 详细日志输出 - 调试用
-            this.logger.info('📋 证据收集详细结果:');
-            this.logger.info(`  - 运行时统计: ${runtimeStats ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 错误日志: ${errorLogs ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 顶点信息: ${vertexInfo ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 作业信息: ${jobInfo ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 编译输出: ${compileOutput ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 警告信息: ${warnings ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 关键指标: ${keyMetrics ? Object.keys(keyMetrics).length : 0}个维度`);
-            
-            // 如果有关键指标，输出具体内容
-            if (keyMetrics) {
-                this.logger.info('🔍 关键指标详情:');
-                if (keyMetrics.runTime) this.logger.info(`  - 运行时间: ${keyMetrics.runTime}ms`);
-                if (keyMetrics.memoryPeakSize) this.logger.info(`  - 内存峰值: ${(keyMetrics.memoryPeakSize / 1024 / 1024).toFixed(1)}MB`);
-                if (keyMetrics.vertexCount) this.logger.info(`  - 顶点数量: ${keyMetrics.vertexCount}`);
-                if (keyMetrics.dataSkewMetrics?.skewRatio) this.logger.info(`  - 数据倾斜比例: ${keyMetrics.dataSkewMetrics.skewRatio.toFixed(1)}x`);
-                if (keyMetrics.joinMetrics?.totalJoinCount) this.logger.info(`  - JOIN操作数: ${keyMetrics.joinMetrics.totalJoinCount}`);
-                if (keyMetrics.shuffleMetrics?.totalShuffleSize) this.logger.info(`  - Shuffle数据量: ${(keyMetrics.shuffleMetrics.totalShuffleSize / 1024).toFixed(1)}GB`);
-            }
+            this.logger.info(`Evidence collection completed: ${availableFiles.length} files in ${collectionTime}ms`);
+            this.logger.info(`Security check: ${securityStatus.safeFiles}/${securityStatus.totalFiles} files passed`);
             
             return {
                 runtimeStats,
@@ -1649,35 +1563,25 @@ export class ScopeOptimizationAgent implements AgentCore {
             };
             
         } catch (error) {
-            this.logger.error(`证据收集过程中发生严重错误: ${error}`);
+            this.logger.error(`Evidence collection error: ${error}`);
             
-            // 即使发生错误，也要尝试返回已收集的数据
             const collectionTime = Date.now() - startTime;
             const hasData = availableFiles.length > 0;
             
-            // 提取关键性能指标（基于已收集的数据）
             const keyMetrics = this.extractKeyMetrics(runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
             
-            // 生成安全状态信息
             const securityStatus = {
                 totalFiles: securityResults.length,
                 safeFiles: securityResults.filter(r => r.safe).length,
                 blockedFiles: securityResults.filter(r => !r.safe).length,
-                securityIssues: securityResults.flatMap(r => r.issues).concat([`收集过程异常: ${error}`]),
+                securityIssues: securityResults.flatMap(r => r.issues).concat([`Collection error: ${error}`]),
                 totalCheckTime: securityResults.reduce((sum, r) => sum + r.checkTime, 0),
                 maxFileSize: Math.max(...securityResults.map(r => r.fileSize), 0),
                 avgCheckTime: securityResults.length > 0 ? 
                     securityResults.reduce((sum, r) => sum + r.checkTime, 0) / securityResults.length : 0
             };
             
-            this.logger.warn(`⚠️ 证据收集遇到错误但继续执行，耗时${collectionTime}ms，收集到${availableFiles.length}个文件`);
-            this.logger.info('📋 已收集数据状态:');
-            this.logger.info(`  - 运行时统计: ${runtimeStats ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 错误日志: ${errorLogs ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 顶点信息: ${vertexInfo ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 作业信息: ${jobInfo ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 编译输出: ${compileOutput ? '✅ 已收集' : '❌ 未收集'}`);
-            this.logger.info(`  - 警告信息: ${warnings ? '✅ 已收集' : '❌ 未收集'}`);
+            this.logger.warn(`Evidence collection completed with errors: ${availableFiles.length} files in ${collectionTime}ms`);
             
             return {
                 runtimeStats,
@@ -1697,21 +1601,18 @@ export class ScopeOptimizationAgent implements AgentCore {
     }
 
          /**
-      * 检测文件夹类型 - 判断是精简版还是完整版SCOPE执行环境
+      * 检测文件夹类型
       */
      private async detectFolderType(jobFolder: string): Promise<'minimal' | 'complete' | 'unknown'> {
          try {
-             // 检查关键文件是否存在来判断文件夹类型
              const fs = require('fs').promises;
              const path = require('path');
              
-             // 精简版特征文件
              const minimalFiles = [
                  '__ScopeRuntimeStatistics__.xml',
                  'ScopeVertexDef.xml'
              ];
              
-             // 完整版特征文件
              const completeFiles = [
                  'JobInfo.xml',
                  '__ScopeCodeGenCompileOutput__.txt',
@@ -1723,7 +1624,6 @@ export class ScopeOptimizationAgent implements AgentCore {
              let minimalCount = 0;
              let completeCount = 0;
              
-             // 检查精简版文件
              for (const file of minimalFiles) {
                  try {
                      await fs.access(path.join(jobFolder, file));
@@ -1733,7 +1633,6 @@ export class ScopeOptimizationAgent implements AgentCore {
                  }
              }
              
-             // 检查完整版文件
              for (const file of completeFiles) {
                  try {
                      await fs.access(path.join(jobFolder, file));
@@ -1743,57 +1642,42 @@ export class ScopeOptimizationAgent implements AgentCore {
                  }
              }
              
-             // 根据文件存在情况判断类型
              if (completeCount >= 3) {
-                 this.logger.info(`🔍 检测到完整版SCOPE执行环境，包含${completeCount}个完整版特征文件`);
+                 this.logger.info(`Detected complete SCOPE environment with ${completeCount} files`);
                  return 'complete';
              } else if (minimalCount >= 1) {
-                 this.logger.info(`🔍 检测到精简版SCOPE执行环境，包含${minimalCount}个核心文件`);
+                 this.logger.info(`Detected minimal SCOPE environment with ${minimalCount} files`);
                  return 'minimal';
              } else {
-                 this.logger.warn(`🔍 无法确定SCOPE环境类型，未找到足够的特征文件`);
+                 this.logger.warn(`Cannot determine SCOPE environment type`);
                  return 'unknown';
              }
              
          } catch (error) {
-             this.logger.warn(`检测文件夹类型失败: ${error}`);
+             this.logger.warn(`Folder type detection failed: ${error}`);
              return 'unknown';
          }
      }
 
     /**
-     * 提取关键性能指标 - 全面增强版，提供高信息密度分析
+     * 提取关键性能指标
      */
     private extractKeyMetrics(runtimeStats: any, jobInfo: any, compileOutput: any, warnings: any, vertexInfo: any): any {
         const metrics: any = {};
         
         try {
-            // === 基础性能指标提取 ===
             this.extractBasicMetrics(metrics, runtimeStats, jobInfo, compileOutput, warnings, vertexInfo);
             
-            // === 数据倾斜专项指标提取 ===
             metrics.dataSkewMetrics = this.extractDataSkewMetrics(runtimeStats, jobInfo, vertexInfo);
-            
-            // === Shuffle性能专项指标提取 ===
             metrics.shuffleMetrics = this.extractShuffleMetrics(runtimeStats, vertexInfo);
-            
-            // === JOIN操作专项指标提取 ===
             metrics.joinMetrics = this.extractJoinMetrics(jobInfo, vertexInfo);
-            
-            // === 编译和计划指标提取 ===
             metrics.compilationMetrics = this.extractCompilationMetrics(compileOutput, jobInfo);
-            
-            // === 资源使用专项指标提取 ===
             metrics.resourceMetrics = this.extractResourceMetrics(runtimeStats, jobInfo);
-            
-            // === 错误和警告详情提取 ===
             metrics.issueMetrics = this.extractIssueMetrics(warnings, compileOutput, runtimeStats);
-            
-            // === 数据源和输出指标提取 ===
             metrics.dataMetrics = this.extractDataMetrics(jobInfo, runtimeStats);
             
         } catch (error) {
-            this.logger.warn(`提取关键指标失败: ${error}`);
+            this.logger.warn(`Key metrics extraction failed: ${error}`);
         }
         
         return metrics;
@@ -1803,7 +1687,6 @@ export class ScopeOptimizationAgent implements AgentCore {
      * 提取基础性能指标
      */
     private extractBasicMetrics(metrics: any, runtimeStats: any, jobInfo: any, compileOutput: any, warnings: any, vertexInfo: any): void {
-        // 从作业信息中提取运行时间
         if (jobInfo?.RunTime) {
             metrics.runTime = parseInt(jobInfo.RunTime) || 0;
         }
@@ -1811,7 +1694,6 @@ export class ScopeOptimizationAgent implements AgentCore {
             metrics.compilationTime = parseInt(jobInfo.CompilationTimeTicks) || 0;
         }
         
-        // 从运行时统计中提取内存和CPU信息
         if (runtimeStats?.timeStats) {
             metrics.cpuTime = runtimeStats.timeStats.executeTotalCpuTime || 0;
             metrics.ioTime = runtimeStats.timeStats.ioTime || 0;
@@ -1820,17 +1702,14 @@ export class ScopeOptimizationAgent implements AgentCore {
             metrics.memoryPeakSize = runtimeStats.memoryStats.maxExecutionMemoryPeakSize || 0;
         }
         
-        // 从编译输出中提取编译指标
         if (compileOutput?.csharpCompileTime) {
             metrics.compilationTime = (metrics.compilationTime || 0) + compileOutput.csharpCompileTime;
         }
         
-        // 从警告信息中提取警告数量
         if (warnings?.warningCount) {
             metrics.warningCount = warnings.warningCount;
         }
         
-        // 从顶点信息中提取顶点数量
         if (vertexInfo?.vertexCount) {
             metrics.vertexCount = vertexInfo.vertexCount;
         }
@@ -1843,7 +1722,6 @@ export class ScopeOptimizationAgent implements AgentCore {
         const skewMetrics: any = {};
         
         try {
-            // 从运行时统计中提取任务执行时间信息
             if (runtimeStats?.taskStats) {
                 const taskDurations = runtimeStats.taskStats.taskDurations || [];
                 if (taskDurations.length > 0) {
@@ -1851,12 +1729,10 @@ export class ScopeOptimizationAgent implements AgentCore {
                     skewMetrics.minTaskDuration = Math.min(...taskDurations);
                     skewMetrics.avgTaskDuration = taskDurations.reduce((a: number, b: number) => a + b, 0) / taskDurations.length;
                     
-                    // 计算倾斜比例
                     if (skewMetrics.avgTaskDuration > 0) {
                         skewMetrics.skewRatio = skewMetrics.maxTaskDuration / skewMetrics.avgTaskDuration;
                     }
                     
-                    // 计算倾斜任务数量（执行时间超过平均值2倍的任务）
                     const threshold = skewMetrics.avgTaskDuration * 2;
                     skewMetrics.skewedTasksCount = taskDurations.filter((duration: number) => duration > threshold).length;
                 }
@@ -1889,7 +1765,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取数据倾斜指标失败: ${error}`);
+            this.logger.warn(`Data skew metrics extraction failed: ${error}`);
         }
         
         return skewMetrics;
@@ -1930,7 +1806,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取Shuffle指标失败: ${error}`);
+            this.logger.warn(`Shuffle metrics extraction failed: ${error}`);
         }
         
         return shuffleMetrics;
@@ -1943,27 +1819,22 @@ export class ScopeOptimizationAgent implements AgentCore {
         const joinMetrics: any = {};
         
         try {
-            // 从顶点信息中统计JOIN操作
             if (vertexInfo?.joins) {
                 const joins = vertexInfo.joins;
                 joinMetrics.totalJoinCount = joins.length;
                 
-                // 按JOIN类型分类统计
                 joinMetrics.innerJoinCount = joins.filter((join: any) => join.type === 'inner').length;
                 joinMetrics.leftJoinCount = joins.filter((join: any) => join.type === 'left').length;
                 joinMetrics.crossJoinCount = joins.filter((join: any) => join.type === 'cross').length;
                 
-                // 提取JOIN键分析
                 joinMetrics.joinKeysAnalysis = joins.map((join: any) => 
                     `${join.leftKey}-${join.rightKey}(${join.type})`
-                ).slice(0, 10); // 限制前10个
+                ).slice(0, 10);
                 
-                // 计算JOIN预估行数
                 joinMetrics.joinEstimatedRowCount = joins.reduce((total: number, join: any) => {
                     return total + (join.estimatedRows || 0);
                 }, 0);
                 
-                // 生成JOIN优化提示
                 joinMetrics.joinOptimizationHints = [];
                 joins.forEach((join: any) => {
                     if (!join.partitionBy) {
@@ -1976,7 +1847,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取JOIN指标失败: ${error}`);
+            this.logger.warn(`JOIN metrics extraction failed: ${error}`);
         }
         
         return joinMetrics;
@@ -2006,7 +1877,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取编译指标失败: ${error}`);
+            this.logger.warn(`Compilation metrics extraction failed: ${error}`);
         }
         
         return compilationMetrics;
@@ -2031,7 +1902,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取资源指标失败: ${error}`);
+            this.logger.warn(`Resource metrics extraction failed: ${error}`);
         }
         
         return resourceMetrics;
@@ -2074,7 +1945,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取问题指标失败: ${error}`);
+            this.logger.warn(`Issue metrics extraction failed: ${error}`);
         }
         
         return issueMetrics;
@@ -2106,7 +1977,7 @@ export class ScopeOptimizationAgent implements AgentCore {
             }
             
         } catch (error) {
-            this.logger.warn(`提取数据指标失败: ${error}`);
+            this.logger.warn(`Data metrics extraction failed: ${error}`);
         }
         
         return dataMetrics;
@@ -2118,33 +1989,26 @@ export class ScopeOptimizationAgent implements AgentCore {
     private enhanceContextWithEvidence(context: AgentContext, evidenceData: EvidenceData): AgentContext {
         const enhancedContext = { ...context };
         
-        // 如果有证据数据，将其添加到对话历史中供LLM参考
         if (evidenceData.hasData) {
             const evidenceSummary = this.generateEvidenceSummary(evidenceData);
             
-            // 详细日志输出 - 调试用
-            this.logger.info('🔗 证据增强上下文:');
-            this.logger.info(`  - 证据摘要已生成，长度: ${evidenceSummary.length}字符`);
-            this.logger.info(`  - 添加到对话历史中，供LLM参考`);
-            this.logger.info(`  - 更新工作空间状态: scopeFilesAvailable = ${evidenceData.availableFiles.length > 0}`);
+            this.logger.info(`Evidence context enhanced: ${evidenceSummary.length} chars, ${evidenceData.availableFiles.length} files`);
             
-            // 添加证据摘要到对话历史
             enhancedContext.conversationHistory = [
                 ...context.conversationHistory,
                 {
                     role: 'system',
-                    content: `运行证据摘要: ${evidenceSummary}`,
+                    content: `Evidence summary: ${evidenceSummary}`,
                     timestamp: new Date()
                 }
             ];
             
-            // 更新工作空间状态
             enhancedContext.workspaceState = {
                 ...context.workspaceState,
                 scopeFilesAvailable: evidenceData.availableFiles.length > 0
             };
         } else {
-            this.logger.warn('⚠️ 证据增强上下文: 未收集到有效证据数据');
+            this.logger.warn('No evidence data available for context enhancement');
         }
         
         return enhancedContext;
@@ -2206,29 +2070,9 @@ export class ScopeOptimizationAgent implements AgentCore {
                        evidenceData.folderType === 'minimal' ? '精简版' : '未知类型';
         summaryParts.push(`\n📁 证据收集: 成功收集${evidenceData.availableFiles.length}个关键文件（${envType}环境），耗时${evidenceData.collectionTime}ms`);
         
-        // 生成最终摘要
         const finalSummary = summaryParts.join('');
         
-        // 详细日志输出 - 调试用
-        this.logger.info('📝 证据摘要生成详情:');
-        this.logger.info(`  - 摘要总长度: ${finalSummary.length}字符`);
-        this.logger.info(`  - 摘要段落数: ${summaryParts.length}段`);
-        this.logger.info(`  - 环境类型: ${envType}`);
-        this.logger.info(`  - 收集文件数: ${evidenceData.availableFiles.length}`);
-        this.logger.info(`  - 收集耗时: ${evidenceData.collectionTime}ms`);
-        
-        // 输出摘要内容的各个部分
-        summaryParts.forEach((part, index) => {
-            const sectionName = part.split(':')[0].trim();
-            const sectionLength = part.length;
-            this.logger.info(`  - 第${index + 1}部分 [${sectionName}]: ${sectionLength}字符`);
-        });
-        
-        // 输出完整的摘要内容 - 这是你想要看到的700多字符的内容
-        this.logger.info('📋 完整证据摘要内容:');
-        this.logger.info('═══════════════════════════════════════════════════════════');
-        this.logger.info(finalSummary);
-        this.logger.info('═══════════════════════════════════════════════════════════');
+        this.logger.info(`Evidence summary generated: ${finalSummary.length} chars, ${summaryParts.length} sections, ${envType} environment`);
         
         return finalSummary;
     }
@@ -2240,7 +2084,7 @@ export class ScopeOptimizationAgent implements AgentCore {
         const parts: string[] = [];
         const metrics = evidenceData.keyMetrics;
         
-        if (!metrics) return '🔍 基础指标: 数据收集中';
+        if (!metrics) return 'Basic metrics: Data collection in progress';
         
         // 运行时间（转换为可读格式）
         if (metrics.runTime) {

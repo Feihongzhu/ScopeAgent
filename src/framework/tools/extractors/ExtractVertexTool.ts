@@ -1,6 +1,6 @@
 import { BaseTool } from './BaseTool';
 import { ToolInput, ToolOutput } from '../../../framework/types/ToolTypes';
-import { parseScopeVertexXML } from '../../../functions/extractVertex';
+import { formatScopeVertexAnalysis, parseScopeVertexXML } from '../../../functions/extractVertex';
 import { Logger } from '../../../functions/logger';
 
 /**
@@ -26,7 +26,7 @@ export class ExtractVertexTool extends BaseTool {
                 vertices: vertexData,
                 summary: {
                     totalVertices: vertexData.length,
-                    vertexTypes: this.summarizeVertexTypes(vertexData)
+                    analysis: formatScopeVertexAnalysis(vertexData)
                 }
             });
         } catch (error) {
@@ -35,11 +35,4 @@ export class ExtractVertexTool extends BaseTool {
         }
     }
 
-    private summarizeVertexTypes(vertices: any[]): Record<string, number> {
-        return vertices.reduce((acc: Record<string, number>, vertex: any) => {
-            const type = vertex.type || 'unknown';
-            acc[type] = (acc[type] || 0) + 1;
-            return acc;
-        }, {});
-    }
 } 
